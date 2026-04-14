@@ -1,0 +1,20 @@
+CREATE TABLE IF NOT EXISTS monsters (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    monster_key VARCHAR(50) UNIQUE NOT NULL,
+    name VARCHAR(100) NOT NULL,
+    level TINYINT UNSIGNED DEFAULT 1,
+    speed TINYINT UNSIGNED DEFAULT 5,
+    status ENUM('wandering', 'guarding', 'patrol', 'boss') DEFAULT 'wandering',
+    base_hp SMALLINT UNSIGNED DEFAULT 10,
+    base_armor TINYINT UNSIGNED DEFAULT 0,
+    base_dmg TINYINT UNSIGNED DEFAULT 1,
+    xp_reward SMALLINT UNSIGNED DEFAULT 5,
+    spawn_weight TINYINT UNSIGNED DEFAULT 10,
+    habitat VARCHAR(100) DEFAULT 'wasteland',
+    is_active TINYINT(1) DEFAULT 1,
+    drop JSON NULL,
+    INDEX idx_key (monster_key),
+    INDEX idx_habitat (habitat),
+    INDEX idx_active_spawn (is_active, spawn_weight),
+    INDEX idx_level_status (level, status, speed)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
