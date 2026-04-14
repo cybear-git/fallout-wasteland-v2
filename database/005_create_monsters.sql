@@ -12,7 +12,8 @@ CREATE TABLE IF NOT EXISTS monsters (
     spawn_weight TINYINT UNSIGNED DEFAULT 10,
     habitat VARCHAR(100) DEFAULT 'wasteland',
     is_active TINYINT(1) DEFAULT 1,
-    drop JSON NULL,
+    loot_table JSON DEFAULT NULL,
+    
     INDEX idx_key (monster_key),
     INDEX idx_habitat (habitat),
     INDEX idx_active_spawn (is_active, spawn_weight),
