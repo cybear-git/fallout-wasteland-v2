@@ -1,10 +1,5 @@
 <?php
-/**
- * config/database.php
- * Безопасное PDO-подключение с загрузкой переменных окружения.
- */
 
-// Загрузка .env (простой парсер без внешних зависимостей)
 function loadEnv(string $path): void {
     if (!file_exists($path)) return;
     $lines = file($path, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
@@ -17,8 +12,6 @@ function loadEnv(string $path): void {
         }
     }
 }
-
-// Загружаем .env из корня проекта
 loadEnv(dirname(__DIR__) . '/.env');
 
 function getDbConnection(): PDO {
