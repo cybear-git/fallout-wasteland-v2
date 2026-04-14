@@ -7,7 +7,7 @@ CREATE TABLE IF NOT EXISTS inventory (
     equipped TINYINT(1) DEFAULT 0,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    CONSTRAINT fk_inv_character FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE,
+    CONSTRAINT fk_inv_character FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE RESTRICT,
     UNIQUE KEY uniq_char_item (character_id, item_type, item_key),
     INDEX idx_character (character_id),
     INDEX idx_type_key (item_type, item_key),
