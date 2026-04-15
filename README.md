@@ -1,227 +1,201 @@
-# ☢️ Fallout: Пустоши — Документация проекта
+# ☢️ Fallout: Wasteland Chronicles
 
-## 📖 Концепция и идея
+**Multiplayer Browser-Based RPG set in the Fallout Universe**
 
-Интерактивная текстовая ролевая игра во вселенной **Fallout**, написанная на **PHP** с использованием **AJAX** для динамического обновления интерфейса без перезагрузки страницы.
-
-### Ключевые особенности:
-- **Пошаговое исследование** огромного мира (карта ~160×90 клеток, эллипс 16:9)
-- **Процедурная генерация** карты с рваными краями, гарантией связности и отсутствием островков
-- **Система уровней опасности**: чем дальше от убежищ, тем сложнее монстры и ценнее лут
-- **Данжи** с уникальной планировкой, боссами, наградой и системой респавна
-- **Полноценная админ-панель** для управления всем контентом без вмешательства в код
-- **Архитектура "Шаблон → Экземпляр"**: каталог локаций отделён от физической карты
+A text-driven, turn-based exploration game where players navigate a massive 160x90 wasteland map, scavenge for loot, fight mutated creatures, trade with other survivors, and uncover the mysteries of the Old World. Built with PHP, MySQL, and vanilla JavaScript.
 
 ---
 
-## 🗂 Структура проекта
+## 🚀 Features
+
+### Core Gameplay
+- **Massive Open World**: 14,400 unique locations across diverse biomes (Wasteland, Mountains, Brotherhood Steel Territory, Frozen North).
+- **Blind Exploration**: No mini-map; navigate using compass directions (N, NE, E, SE, S, SW, W, NW) and atmospheric descriptions.
+- **Vault Origins**: Start in one of 8 unique Vaults, receive starting gear (Jumpsuit, Stimpaks, Caps) from a Vault Keeper.
+- **Turn-Based System**: 20-second action timer per turn; synchronized world events (weather, creature migrations).
+- **Permadeath Risks**: Combat escape mechanics, "Shock" state on logout during battle, offline invisibility.
+
+### Mechanics
+- **S.P.E.C.I.A.L. Stats**: Allocate points on creation and level-up (threshold >10 costs 2 points).
+- **Scavenging**: Search locations for junk, weapons, and chems; risk random encounters.
+- **Inventory Management**: Equip armor/weapons, use consumables, manage junk for the Junk Jet.
+- **Dynamic Events**: Moving weather patterns (Rad Storms, Acid Rain) and roaming Deathclaw packs.
+- **Player Interaction**: Detect nearby survivors, trade via barter or caps, beware of raiders.
+
+### Admin Tools
+- **World Editor**: Manually place dungeons, set bosses, define rewards.
+- **Real-Time Monitoring**: View player positions, active weather, and creature packs.
+- **Content Management**: CRUD for items, monsters, quotes, and configurations.
+
+---
+
+## 🛠️ Tech Stack
+
+| Component | Technology |
+|-----------|------------|
+| **Backend** | PHP 8.1+ (Strict Types, PDO) |
+| **Database** | MySQL 8.0 (InnoDB, Triggers, Events) |
+| **Frontend** | Vanilla JS (ES6+), CSS3 (Pip-Boy CRT Effect) |
+| **Architecture** | Modular PHP (No Framework), REST-like API endpoints |
+| **Security** | CSRF Tokens, Prepared Statements, Session Regeneration |
+
+---
+
+## 📦 Installation
+
+### Prerequisites
+- PHP 8.1+
+- MySQL 8.0+
+- Composer (optional, for dev tools)
+
+### Quick Start
+
+1. **Clone the Repository**
+   ```bash
+   git clone <repository-url>
+   cd fallout-wasteland
+   ```
+
+2. **Configure Database**
+   Edit `config/database.php`:
+   ```php
+   define('DB_HOST', 'localhost');
+   define('DB_NAME', 'fallout_db');
+   define('DB_USER', 'root');
+   define('DB_PASS', 'your_password');
+   ```
+
+3. **Import Schema & Seed Data**
+   ```bash
+   mysql -u root -p fallout_db < database/schema.sql
+   mysql -u root -p fallout_db < database/seed.sql
+   ```
+
+4. **Generate World Map**
+   ```bash
+   php scripts/generate_world_map.php
+   ```
+
+5. **Start Development Server**
+   ```bash
+   php -S localhost:8000 -t public
+   ```
+
+6. **Play**
+   Open `http://localhost:8000` in your browser.
+   - **Default Admin**: `admin` / `admin123`
+
+---
+
+## 🗺️ Project Structure
 
 ```
-fallout-wasteland-v2/
-├── public/                          # Точка входа (доступно из браузера)
-│   ├── index.php                    # Главная страница (авторизация/создание персонажа)
-│   ├── admin.php                    # Админ-панель (iOS Light стиль)
-│   ├── admin_login.php              # Отдельный вход для администратора
-│   └── assets/                      # Статические файлы
-│       ├── css/game.css             # Стили игры (Pip-Boy дизайн)
-│       └── js/
-│           ├── config.js            # Константы и конфигурация
-│           ├── auth.js              # Авторизация
-│           └── game.js              # Игровая логика и AJAX
+/workspace
 ├── config/
-│   ├── database.php                 # PDO-подключение с загрузкой .env
-│   └── .env                         # Учётные данные БД (не коммитится)
-├── database/                        # Миграции БД
-│   ├── 001_create_players.sql
-│   ├── ...
-│   ├── 013_refactor_map_topology.sql
-│   ├── 014_populate_locations_catalog.sql
-│   └── 015_create_dungeons.sql
+│   └── database.php          # DB connection settings
+├── database/
+│   ├── schema.sql            # Full table structure
+│   └── seed.sql              # Initial data (quotes, monsters, items)
+├── includes/
+│   ├── auth.php              # Authentication helpers
+│   ├── csrf.php              # CSRF token logic
+│   └── admin_views/          # Admin panel partials
+├── public/
+│   ├── assets/
+│   │   ├── css/
+│   │   │   ├── admin.css     # Admin panel styles
+│   │   │   └── game.css      # Pip-Boy interface styles
+│   │   └── js/
+│   │       ├── admin.js      # Admin AJAX logic
+│   │       └── game.js       # Game loop & UI
+│   ├── api/
+│   │   ├── search.php        # Scavenging endpoint
+│   │   └── inventory.php     # Inventory management
+│   ├── index.php             # Main game loop (Pip-Boy)
+│   ├── shelter.php           # Vault intro & character start
+│   ├── dungeon.php           # Dungeon instance logic
+│   ├── admin.php             # Admin dashboard
+│   └── logout.php            # Safe logout handler
 ├── scripts/
-│   └── generate_world_map.php       # Генератор карты мира
-└── README.md                        # Этот файл
+│   └── generate_world_map.php # World generation script
+├── CHANGELOG.md              # Version history
+└── README.md                 # This file
 ```
 
 ---
 
-## 🏗 Архитектура Базы Данных
+## 🎮 Game Mechanics Deep Dive
 
-### Основные таблицы:
-| Таблица | Назначение |
-|---------|-----------|
-| `players` | Аккаунты пользователей (логин, хеш пароля, роль `admin/player`, статус) |
-| `characters` | Персонажи игроков (S.P.E.C.I.A.L., HP, RAD, крышки, экипировка) |
-| `inventory` | Инвентарь (ссылки на предметы, стаки, флаг экипировки) |
-| `monsters` | Шаблоны врагов (HP, урон, броня, XP, таблица лута в JSON) |
-| `weapons` | Оружие (кость урона, модификатор, крит, дальность) |
-| `armors` | Броня (защита, сопротивление радиации, слот) |
-| `consumables` | Расходники (лечение, снятие радиации, бусты, зависимость) |
-| `loot` | Предметы лута (компоненты, хлам, валюта, квестовые) |
-| `locations` | **Каталог шаблонов** (название, тип, описание, опасность — без координат!) |
-| `map_nodes` | **Физические клетки карты** (pos_x, pos_y, location_id, danger_level, радиация) |
-| `map_adjacency` | **Граф переходов** (from_node, to_node, direction) |
-| `dungeons` | **Подземелья** (босс, награда JSON, респавн, last_cleared_at) |
-| `dungeon_nodes` | **Мини-карты данжей** (dungeon_id, pos_x, pos_y, tile_type, is_entrance) |
-| `game_settings` | Настройки баланса (ключ-значение) |
-| `admin_logs` | Журнал действий администратора |
+### Turn System
+- Each player action (move, search, fight) consumes a **20-second tick**.
+- Inactivity triggers warnings; 3-5 strikes force logout.
+- World events (weather, creatures) update on global ticks independent of player count.
 
-### ⚠️ Важные архитектурные решения:
-1. **Поле `icon` удалено** из всех таблиц предметов. Визуализация делается через CSS/эмодзи на клиенте.
-2. **`locations` больше не хранит координаты**. Это чистый справочник шаблонов. Координаты живут только в `map_nodes`.
-3. **Карта — это граф**, а не просто сетка. Таблица `map_adjacency` позволяет создавать обрывы, мосты и односторонние проходы.
-4. **Генератор считает опасность эллиптически**: `sqrt((dx/a)² + (dy/b)²)`, чтобы убежища распределялись равномерно относительно вытянутой формы карты.
+### Combat
+- **Turn-Based**: Select actions (Attack, Use Item, Flee).
+- **Junk Jet**: Uses inventory junk as ammo; auto-consumes on fire.
+- **Escape Check**: Forced logout during combat triggers a Luck/Agility check. Failure = 1 HP + "Miraculous Survival".
+
+### Exploration
+- **Biomes**: Affect encounter tables and search success rates.
+- **Borders**: Impassable zones (Mountains, Brotherhood Steel) block movement with warnings.
+- **Dungeons**: Multi-cell interiors with bosses and unique loot.
+
+### Multiplayer
+- **Proximity Alert**: "You see a figure in the distance..." if players are within 2 cells.
+- **Trading**: Direct P2P trade when on the same cell.
+- **Offline Mode**: Logged-out players vanish from the world state.
 
 ---
 
-## ✅ Что уже сделано
+## 📝 Roadmap
 
-### 🔐 Система доступа
-- ✅ Отдельная авторизация для админки (`admin_login.php`) с изолированной сессией
-- ✅ Двойная проверка прав (сессия + запрос к БД на роль `admin`)
-- ✅ Скрипт создания администратора (`create_admin.php`) с хешированием паролей
+### Phase 1: Core Loop (Current: Alpha 0.5)
+- [x] Map generation & movement
+- [x] Vault intro & starting gear
+- [x] Search & inventory
+- [x] Basic combat backend
+- [ ] Combat UI integration
+- [ ] Weather system activation
 
-### 🗺️ Карта мира
-- ✅ Генератор эллипса 16:9 (радиусы 80×45, ~160×90 клеток) с рваными краями
-- ✅ Алгоритм BFS для удаления изолированных островков (гарантия связности)
-- ✅ Пакетная вставка в БД (~2000 записей за запрос) для производительности
-- ✅ 6 убежищ размещаются случайно с минимальным расстоянием друг от друга
-- ✅ Секретный клад в центре (0,0)
-- ✅ Автоматический расчёт уровня опасности (1–10) для каждой клетки на основе удалённости от ближайшего убежища
-- ✅ Распределение локаций по зонам: безопасные рядом с убежищами, опасные на окраинах
+### Phase 2: Economy & Progression
+- [ ] NPC Trading posts
+- [ ] Chemistry & addiction mechanics
+- [ ] Leveling & perk system
+- [ ] Quest framework
 
-### ⚔️ Данжи
-- ✅ Генератор данжей в админке (параметры: кол-во, уровни, размеры)
-- ✅ Автоматическое создание планировки (вход, коридоры, комнаты, босс, сокровищница, выход)
-- ✅ Визуальный редактор нодов данжа (AJAX: добавление, удаление, смена типа/локации)
-- ✅ Система наград (крышки + лут через запятую → сохраняется в JSON)
-- ✅ Поле респавна (`respawn_hours`, `last_cleared_at`)
-
-### 🖥️ Админ-панель
-- ✅ Полный CRUD для: монстров, оружия, брони, расходников, лута, локаций, пользователей, настроек
-- ✅ Управление пользователями: бан/разбан, смена роли, сброс пароля, удаление
-- ✅ Дашборд со статистикой (игроки, предметы, клетки карты, размер мира)
-- ✅ Журнал действий администратора
-- ✅ Визуализация карты мира с автоматическим масштабированием (без полос прокрутки)
-- ✅ Форма привязки локаций к клеткам карты
+### Phase 3: Multiplayer & Events
+- [ ] Real-time tick synchronization
+- [ ] Deathclaw pack AI
+- [ ] Player factions
+- [ ] Chat system
 
 ---
 
-## 🚧 Что ещё не сделано / требует внимания
+## 🤝 Contributing
 
-### 🎮 Игровой клиент
-- ❌ **Pip-Boy интерфейс**: черно-зелёный экран, скан-линии, перекрестие, кнопки (инвентарь, история, карта 9×9, S.P.E.C.I.A.L., экипировка)
-- ❌ **Нижний HUD**: полоска HP, статы, радиация, крышки — всегда видны
-- ❌ **Система боя**: экран делится на визуал монстра + лог + кнопки [Атака] / [Бежать]
-- ❌ **Игровой цикл**: движение, поиск, использование предметов, бой, получение лута
-- ❌ **Климат и погода**: дождь, радиационные бури, влияние на видимость и урон
+1. Fork the repo.
+2. Create a feature branch (`git checkout -b feature/awesome-feature`).
+3. Commit changes (`git commit -m 'Add awesome feature'`).
+4. Push to branch (`git push origin feature/awesome-feature`).
+5. Open a Pull Request.
 
-### 🤖 Логика мира
-- ❌ **Динамический спавн монстров** при входе на клетку (вероятность зависит от опасности и типа локации)
-- ❌ **Система квестов**: привязка к `locations`, прогресс, награды
-- ❌ **Торговля**: NPC-торговцы, цены, бартер
-- ❌ **Крафт**: сбор компонентов → создание предметов
-
-### 🛠 Админка
-- ⚠️ **Визуальный редактор глобальной карты**: рисование связей, изменение типа тайлов, массовые операции
-- ⚠️ **Просмотр планировки данжа** в режиме "только чтение" для быстрого аудита
-- ⚠️ **Экспорт/импорт** данных (JSON/SQL) для бэкапов контента
-
-### 🔒 Безопасность и оптимизация
-- ⚠️ **Rate-limiting** для AJAX-запросов
-- ⚠️ **CSRF-токены** для всех форм в админке
-- ⚠️ **Пагинация** для списков в админке (монстры, предметы, логи)
-- ⚠️ **Кэширование** статистики дашборда
+**Coding Standards**:
+- PHP: PSR-12, strict types.
+- JS: ES6+, no `var`.
+- SQL: Prepared statements only.
 
 ---
 
-## 📝 Важные договорённости и пожелания пользователя
+## 📄 License
 
-### 🎨 Дизайн игры (Pip-Boy)
-- Экран в стиле монохромного терминала Fallout: чёрный фон, зелёный текст (`#76ff03`), эффект скан-линий
-- Перекрестие в центре экрана (кнопка поиска)
-- Кнопки навигации: Инвентарь, История, Карта (9×9 вокруг героя), S.P.E.C.I.A.L., Экипировка
-- В бою: экран делится на две части — слева отрисовка монстра (SVG/картинка в зелёной гамме), справа лог боя, снизу кнопки [АТАКА] / [БЕЖАТЬ]
-- Нижний бар всегда виден: HP, основные статы, радиация, крышки
-
-### 🗺️ Карта мира
-- Форма: эллипс, вписанный в прямоугольник 16:9
-- Размер: ~160×90 клеток (радиусы 80×45)
-- Рваные края (шум ±5% к радиусу эллипса)
-- Все клетки связаны в единую сеть (BFS от центра)
-- Островки без связей автоматически удаляются
-- Пустыни ближе к югу, предгорья на западе, руины городов и военные базы распределены логично
-- Очаги радиации занимают несколько клеток (не точечно)
-- Уровень сложности растёт пропорционально удалению от убежищ
-- При пересечении радиусов выбирается наименьший уровень сложности
-
-### 🏰 Данжи
-- Разные размеры: от 1×1 (пещера, хижина) до 3×3+ (базы, комплексы)
-- Маленьких данжей больше, чем больших
-- У каждого данжа: босс, награда, период респавна (нельзя пройти сразу заново)
-- Можно покинуть в любой момент → возврат на клетку входа
-- После убийства босса → выход с наградой
-- Генерация автоматическая, но админ может редактировать планировку вручную
-
-### 🛠 Админ-панель
-- Отдельный вход (не через игровую авторизацию)
-- Стиль: iOS Light (светлый, системные шрифты, скругления)
-- Дашборды: статистика, карта игрового мира, логи игры, настройки
-- Карта мира: визуализация квадратами, без полос прокрутки (автомасштабирование)
-- Клик по клетке → выбор локации из справочника → применение
-- Редактор данжей: добавление/удаление нодов, смена типа, привязка лута
-
-### ⚙️ Общие правила разработки
-- Вся логика в БД, никаких хардкод-констант в JS
-- JS — тонкий клиент для отображения и AJAX-запросов
-- CSS и JS вынесены в `assets/`
-- Пошаговая разработка: запрос → код → анализ → фикс в Git
-- Не удалять рабочий код без согласования
-- Спрашивать перед внедрением новых фич
+This project is a fan-made tribute to the Fallout universe. All game assets and lore belong to Bethesda Softworks / Interplay. Code is released under the MIT License.
 
 ---
 
-## 🚀 Быстрый старт
+## 🙏 Acknowledgments
 
-### 1. Настройка окружения
-```bash
-# Клонировать репозиторий
-git clone <url> fallout-wasteland-v2
-cd fallout-wasteland-v2
+- **Fallout Universe**: Created by Interplay, developed by Black Isle, Bethesda, Obsidian.
+- **Inspiration**: Classic CRPGs, text MUDs, Fallout 1/2/Tactics.
 
-# Создать .env из примера
-cp config/.env.example config/.env
-# Отредактировать DB_USER, DB_PASS, DB_NAME
-```
-
-### 2. Создание БД и миграции
-```bash
-mysql -u root -p -e "CREATE DATABASE fallout_wastelands_v2 CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
-
-# Выполнить миграции по порядку
-for f in database/0*.sql; do mysql -u root -p fallout_wastelands_v2 < "$f"; done
-```
-
-### 3. Создание админа
-```bash
-php create_admin.php
-# Логин: admin, Пароль: admin123
-```
-
-### 4. Генерация мира
-```bash
-php scripts/generate_world_map.php
-# Создаст ~10 000 связанных клеток, 6 убежищ, клад в центре
-```
-
----
-
-## 📌 Следующие шаги
-
-1. Реализовать **игровой цикл** (движение, поиск, бой) с AJAX-обновлением
-2. Создать **Pip-Boy интерфейс** согласно макету
-3. Добавить **динамический спавн монстров** на основе `danger_level` и `tile_type`
-4. Внедрить **систему погоды** и её влияние на геймплей
-5. Настроить **пагинацию и CSRF** в админке
-6. Добавить **визуальный редактор связей** глобальной карты
-
----
+*"War. War never changes."*

@@ -1,0 +1,506 @@
+/**
+ * Стили админ-панели Fallout: Пустоши
+ * Стиль: iOS Light (светлый, системные шрифты, скругления)
+ */
+
+:root {
+    --bg: #f2f2f7;
+    --card: #ffffff;
+    --blue: #007aff;
+    --green: #34c759;
+    --red: #ff3b30;
+    --orange: #ff9500;
+    --text: #1c1c1e;
+    --gray: #8e8e93;
+    --border: #e5e5ea;
+    --input: #f2f2f7;
+    --sidebar-width: 260px;
+}
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    display: flex;
+    min-height: 100vh;
+}
+
+/* ════════════ SIDEBAR ════════════ */
+.sidebar {
+    width: var(--sidebar-width);
+    background: var(--card);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    position: fixed;
+    height: 100vh;
+    z-index: 100;
+    overflow-y: auto;
+}
+
+.sidebar-header {
+    padding: 20px;
+    border-bottom: 1px solid var(--border);
+}
+
+.sidebar-header h2 {
+    font-size: 20px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.nav-section {
+    padding: 15px 0;
+}
+
+.nav-label {
+    padding: 0 20px 5px;
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--gray);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.nav-item {
+    display: flex;
+    align-items: center;
+    padding: 10px 20px;
+    color: var(--text);
+    text-decoration: none;
+    font-size: 14px;
+    font-weight: 500;
+    gap: 10px;
+    transition: background 0.2s;
+}
+
+.nav-item:hover {
+    background: var(--input);
+}
+
+.nav-item.active {
+    background: var(--blue);
+    color: #fff;
+    font-weight: 600;
+}
+
+.nav-item .icon {
+    width: 20px;
+    text-align: center;
+}
+
+.nav-item .badge {
+    margin-left: auto;
+    background: var(--gray);
+    color: #fff;
+    font-size: 10px;
+    padding: 2px 6px;
+    border-radius: 10px;
+}
+
+.logout-btn {
+    margin-top: auto;
+    border-top: 1px solid var(--border);
+    padding: 15px 20px;
+    color: var(--red);
+    font-weight: 600;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.logout-btn:hover {
+    background: rgba(255, 59, 48, 0.1);
+}
+
+/* ════════════ MAIN CONTENT ════════════ */
+.main {
+    flex: 1;
+    margin-left: var(--sidebar-width);
+    padding: 30px;
+    max-width: 1400px;
+}
+
+.page-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+    gap: 15px;
+}
+
+.page-header h1 {
+    font-size: 26px;
+    font-weight: 700;
+}
+
+.page-header .subtitle {
+    color: var(--gray);
+    font-size: 14px;
+    margin-top: 4px;
+}
+
+/* ════════════ CARDS ════════════ */
+.card {
+    background: var(--card);
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 20px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+}
+
+.card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 15px;
+    padding-bottom: 15px;
+    border-bottom: 1px solid var(--border);
+}
+
+.card-title {
+    font-size: 18px;
+    font-weight: 600;
+}
+
+/* ════════════ DASHBOARD STATS ════════════ */
+.stats-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 20px;
+    margin-bottom: 30px;
+}
+
+.stat-card {
+    background: var(--card);
+    border-radius: 12px;
+    padding: 20px;
+    text-align: center;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+}
+
+.stat-value {
+    font-size: 32px;
+    font-weight: 700;
+    color: var(--blue);
+    margin-bottom: 5px;
+}
+
+.stat-label {
+    font-size: 13px;
+    color: var(--gray);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+/* ════════════ TABLES ════════════ */
+.table-container {
+    overflow-x: auto;
+}
+
+.data-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 14px;
+}
+
+.data-table th,
+.data-table td {
+    padding: 12px 15px;
+    text-align: left;
+    border-bottom: 1px solid var(--border);
+}
+
+.data-table th {
+    font-weight: 600;
+    color: var(--gray);
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    background: var(--input);
+}
+
+.data-table tr:hover {
+    background: var(--input);
+}
+
+.data-table .actions {
+    display: flex;
+    gap: 8px;
+}
+
+/* ════════════ BUTTONS ════════════ */
+.btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 16px;
+    border: none;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s;
+    text-decoration: none;
+}
+
+.btn-primary {
+    background: var(--blue);
+    color: #fff;
+}
+
+.btn-primary:hover {
+    background: #0056b3;
+}
+
+.btn-success {
+    background: var(--green);
+    color: #fff;
+}
+
+.btn-success:hover {
+    background: #28a745;
+}
+
+.btn-danger {
+    background: var(--red);
+    color: #fff;
+}
+
+.btn-danger:hover {
+    background: #dc3545;
+}
+
+.btn-secondary {
+    background: var(--input);
+    color: var(--text);
+}
+
+.btn-secondary:hover {
+    background: var(--border);
+}
+
+.btn-sm {
+    padding: 5px 10px;
+    font-size: 12px;
+}
+
+/* ════════════ FORMS ════════════ */
+.form-group {
+    margin-bottom: 15px;
+}
+
+.form-label {
+    display: block;
+    margin-bottom: 5px;
+    font-weight: 500;
+    font-size: 14px;
+}
+
+.form-control {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    font-size: 14px;
+    background: var(--card);
+    transition: border-color 0.2s;
+}
+
+.form-control:focus {
+    outline: none;
+    border-color: var(--blue);
+}
+
+.form-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 15px;
+}
+
+/* ════════════ ALERTS ════════════ */
+.alert {
+    padding: 12px 16px;
+    border-radius: 8px;
+    margin-bottom: 20px;
+    font-size: 14px;
+}
+
+.alert-success {
+    background: rgba(52, 199, 89, 0.1);
+    color: var(--green);
+    border: 1px solid var(--green);
+}
+
+.alert-error {
+    background: rgba(255, 59, 48, 0.1);
+    color: var(--red);
+    border: 1px solid var(--red);
+}
+
+/* ════════════ MAP EDITOR ════════════ */
+.map-container {
+    overflow: auto;
+    max-height: 70vh;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px;
+    background: var(--card);
+}
+
+.map-grid {
+    display: grid;
+    gap: 1px;
+    background: var(--border);
+}
+
+.map-cell {
+    width: 20px;
+    height: 20px;
+    background: var(--card);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    cursor: pointer;
+    transition: transform 0.1s;
+}
+
+.map-cell:hover {
+    transform: scale(1.2);
+    z-index: 10;
+    border: 1px solid var(--blue);
+}
+
+.map-cell.vault { background: #007aff; color: #fff; }
+.map-cell.city { background: #8e8e93; color: #fff; }
+.map-cell.dungeon { background: #ff3b30; color: #fff; }
+.map-cell.radzone { background: #34c759; color: #fff; }
+.map-cell.mountain { background: #5ac8fa; color: #fff; }
+.map-cell.ruins { background: #ff9500; color: #fff; }
+.map-cell.desert { background: #ffd60a; color: #000; }
+.map-cell.forest { background: #30d158; color: #fff; }
+.map-cell.military { background: #bf5af2; color: #fff; }
+.map-cell.camp { background: #ff6b6b; color: #fff; }
+.map-cell.wasteland { background: #aeaeb2; color: #000; }
+
+/* ════════════ DUNGEON EDITOR ════════════ */
+.dungeon-grid {
+    display: grid;
+    gap: 2px;
+    background: var(--border);
+    padding: 10px;
+    border-radius: 8px;
+    max-width: 400px;
+}
+
+.dungeon-cell {
+    width: 40px;
+    height: 40px;
+    background: var(--card);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: all 0.2s;
+}
+
+.dungeon-cell:hover {
+    transform: scale(1.1);
+}
+
+.dungeon-cell.entrance { background: #34c759; color: #fff; }
+.dungeon-cell.exit { background: #007aff; color: #fff; }
+.dungeon-cell.boss { background: #ff3b30; color: #fff; }
+.dungeon-cell.treasure { background: #ff9500; color: #fff; }
+.dungeon-cell.trap { background: #8e8e93; color: #fff; }
+.dungeon-cell.room { background: #5ac8fa; color: #fff; }
+.dungeon-cell.corridor { background: #aeaeb2; color: #000; }
+
+/* ════════════ MODAL ════════════ */
+.modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+}
+
+.modal {
+    background: var(--card);
+    border-radius: 12px;
+    padding: 25px;
+    max-width: 500px;
+    width: 90%;
+    max-height: 80vh;
+    overflow-y: auto;
+}
+
+.modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 20px;
+}
+
+.modal-title {
+    font-size: 20px;
+    font-weight: 600;
+}
+
+.modal-close {
+    background: none;
+    border: none;
+    font-size: 24px;
+    cursor: pointer;
+    color: var(--gray);
+}
+
+/* ════════════ UTILITIES ════════════ */
+.text-center { text-align: center; }
+.text-right { text-align: right; }
+.mt-20 { margin-top: 20px; }
+.mb-20 { margin-bottom: 20px; }
+.flex { display: flex; }
+.gap-10 { gap: 10px; }
+.align-center { align-items: center; }
+
+/* ════════════ RESPONSIVE ════════════ */
+@media (max-width: 768px) {
+    .sidebar {
+        width: 100%;
+        height: auto;
+        position: relative;
+        border-right: none;
+        border-bottom: 1px solid var(--border);
+    }
+    
+    .main {
+        margin-left: 0;
+        padding: 15px;
+    }
+    
+    .stats-grid {
+        grid-template-columns: repeat(2, 1fr);
+    }
+    
+    .page-header {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+}
