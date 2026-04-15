@@ -22,7 +22,7 @@ try {
     // 1. Очистка старых данных
     $pdo->exec("TRUNCATE TABLE map_nodes");
     $pdo->exec("TRUNCATE TABLE vault_keepers");
-    echo "✅ Таблицы очищены.\n";
+    echo "Tables cleared.\n";
 
     // 2. Подготовка утверждений
     $stmtInsertNode = $pdo->prepare("
@@ -131,7 +131,7 @@ try {
             $nodesCreated++;
         }
     }
-    echo "✅ Создано {$nodesCreated} узлов карты.\n";
+    echo "Created {$nodesCreated} map nodes.\n";
 
     // 4. Размещение 8 Убежищ в безопасных зонах (предгорья или центр)
     echo "🏠 Размещение {$vaultCount} убежищ...\n";
@@ -206,13 +206,13 @@ try {
     }
 
     if ($placedVaults < $vaultCount) {
-        echo "⚠️  Не удалось разместить все убежища. Размещено: $placedVaults из $vaultCount\n";
+        echo "Warning: Could not place all vaults. Placed: $placedVaults of $vaultCount\n";
     } else {
-        echo "✅ Все убежища успешно размещены.\n";
+        echo "All vaults successfully placed.\n";
     }
 
     // 5. Добавление нескольких городов/заводов (кластеры)
-    echo "🏭 Генерация крупных локаций (города, заводы)...\n";
+    echo "Generating large locations (cities, factories)...\n";
     $largeLocationsCount = 12;
     $placedLarge = 0;
     $attempts = 0;

@@ -9,7 +9,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Вход в Пустошь - Fallout RPG</title>
-    <link rel="stylesheet" href="assets/css/game.css">
+    <link rel="stylesheet" href="/assets/css/game.css">
     <style>
         .auth-container {
             max-width: 500px;
