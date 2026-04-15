@@ -1,39 +1,64 @@
 <?php
+declare(strict_types=1);
+
 /**
- * public/admin.php
- * Админ-панель Fallout: Пустоши (Стабильная версия v2.1)
- * Включает: CRUD, Карту мира, Данжи (генератор + редактор), Настройки, Логи
+ * Админ-панель Fallout: Пустоши
+ * Версия: 3.0 (Refactored)
+ * 
+ * @package FalloutWasteland
+ * @author Admin
  */
+
 session_name('fw_adm_ssid');
 session_start([
     'cookie_httponly' => true,
     'cookie_samesite' => 'Strict',
     'use_only_cookies' => true
 ]);
-require_once __DIR__ . '/../config/database.php';
 
-// 1. АВТОРИЗАЦИЯ
-if (empty($_SESSION['admin_id'])) { header('Location: admin_login.php'); exit; }
+require_once __DIR__ . '/../config/database.php';
+require_once __DIR__ . '/../includes/auth.php';
+require_once __DIR__ . '/../includes/csrf.php';
+
+// 1. АВТОРИЗАЦИЯ И ПРОВЕРКА ПРАВ
+if (empty($_SESSION['admin_id'])) {
+    header('Location: admin_login.php');
+    exit;
+}
 
 $pdo = getDbConnection();
-$adminId = $_SESSION['admin_id'];
+$adminId = (int)$_SESSION['admin_id'];
 $adminName = $_SESSION['admin_name'] ?? 'Admin';
 
+// Проверка роли и статуса администратора
 $stmt = $pdo->prepare("SELECT role, is_active FROM players WHERE id = ?");
 $stmt->execute([$adminId]);
 $admin = $stmt->fetch();
+
 if (!$admin || $admin['role'] !== 'admin' || $admin['is_active'] != 1) {
-    session_destroy(); header('Location: admin_login.php?error=revoked'); exit;
+    session_destroy();
+    header('Location: admin_login.php?error=revoked');
+    exit;
 }
 
+// 2. РОУТИНГ
 $action = $_GET['action'] ?? 'dashboard';
-$id = (int)($_GET['id'] ?? 0);
+$id = isset($_GET['id']) ? (int)$_GET['id'] : 0;
+$page = isset($_GET['page']) ? max(1, (int)$_GET['page']) : 1;
+$limit = 50;
+
 $error = '';
 $success = '';
+$editData = null;
+$items = [];
 
-// ════════════ ОБРАБОТКА POST ════════════
+// 3. CSRF ВАЛИДАЦИЯ ДЛЯ POST
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    try {
+    if (!validateCsrfToken($_POST['csrf_token'] ?? '')) {
+        $error = '❌ Неверный CSRF-токен';
+        $_POST = []; // Сброс данных
+    }
+}
         switch ($action) {
             // --- ДАНЖИ ---
             case 'dungeons':
@@ -138,12 +163,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 }
                 break;
                 
-            case 'logout': session_destroy(); header('Location: admin_login.php'); exit;
+            case 'logout':
+                adminLogout();
+                break;
         }
-    } catch (Exception $e) { $error = 'Ошибка: ' . $e->getMessage(); }
+    } catch (Exception $e) {
+        $error = 'Ошибка: ' . $e->getMessage();
+    }
 }
 
-function logAction($action, $table, $recordId) { global $pdo, $adminId; try { $pdo->prepare("INSERT INTO admin_logs (admin_id,action,table_name,record_id,ip_address) VALUES (?,?,?,?,?)")->execute([$adminId,$action,$table,$recordId,$_SERVER['REMOTE_ADDR']??'127.0.0.1']); } catch(Exception $e){} }
+// Логирование действий администратора (используем функцию из auth.php)
+function logAction($action, $table, $recordId) {
+    global $pdo, $adminId;
+    try {
+        logAdminAction($pdo, $adminId, $action, $table, $recordId);
+    } catch(Exception $e) {
+        error_log("Log action failed: " . $e->getMessage());
+    }
+}
 
 // ════════════ ЗАГРУЗКА ДАННЫХ ════════════
 $editData = null; $items = [];
@@ -339,6 +376,7 @@ if ($action === 'dashboard') {
         <a href="?action=users" class="nav-item <?= $action=='users'?'active':'' ?>"><span class="icon">👥</span> <span>Игроки</span></a>
         <a href="?action=settings" class="nav-item <?= $action=='settings'?'active':'' ?>"><span class="icon">⚙️</span> <span>Настройки</span></a>
         <a href="?action=logs" class="nav-item <?= $action=='logs'?'active':'' ?>"><span class="icon">📜</span> <span>Логи</span></a>
+        <a href="?action=logout" class="nav-item" style="color:var(--red);"><span class="icon">🚪</span> <span>Выход</span></a>
     </div>
 </nav>
 

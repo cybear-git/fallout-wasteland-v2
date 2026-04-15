@@ -1,0 +1,423 @@
+/* ============================================
+   PIP-BOY 3000 STYLE GUIDE
+   Fallout RPG - Монохромный ЭЛТ-интерфейс
+   ============================================ */
+
+:root {
+    --pipboy-green: #4caf50;
+    --pipboy-bright: #66ff66;
+    --pipboy-dark: #1a2f1a;
+    --pipboy-bg: #0a0f0a;
+    --pipboy-border: #3d5c3d;
+    --pipboy-shadow: rgba(76, 175, 80, 0.5);
+    --pipboy-warning: #ffcc00;
+    --pipboy-danger: #ff6666;
+}
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body.pipboy-body {
+    background: #000;
+    color: var(--pipboy-bright);
+    font-family: 'Courier New', monospace;
+    min-height: 100vh;
+    overflow-x: hidden;
+}
+
+/* ЭЛТ-эффект (scanlines) */
+body.pipboy-body::before {
+    content: '';
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: repeating-linear-gradient(
+        0deg,
+        rgba(0, 0, 0, 0.15),
+        rgba(0, 0, 0, 0.15) 1px,
+        transparent 1px,
+        transparent 2px
+    );
+    pointer-events: none;
+    z-index: 9999;
+}
+
+.container {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 20px;
+}
+
+/* ============================================
+   PIP-BOY CONTAINER
+   ============================================ */
+.pipboy-container {
+    background: var(--pipboy-bg);
+    border: 4px solid var(--pipboy-border);
+    border-radius: 15px;
+    box-shadow: 0 0 50px var(--pipboy-shadow), inset 0 0 30px rgba(0, 0, 0, 0.5);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    overflow: hidden;
+}
+
+/* Свечение экрана */
+.pipboy-container::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: radial-gradient(ellipse at center, transparent 0%, rgba(0, 0, 0, 0.4) 100%);
+    pointer-events: none;
+    z-index: 1;
+}
+
+/* ============================================
+   HEADER
+   ============================================ */
+.pipboy-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 15px 25px;
+    border-bottom: 3px solid var(--pipboy-border);
+    background: var(--pipboy-dark);
+    z-index: 2;
+}
+
+.header-left, .header-right {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+}
+
+.pipboy-logo {
+    font-size: 24px;
+    font-weight: bold;
+    text-shadow: 0 0 10px var(--pipboy-shadow);
+    animation: flicker 3s infinite;
+}
+
+.player-name {
+    color: var(--pipboy-bright);
+    padding: 5px 15px;
+    background: var(--pipboy-bg);
+    border: 1px solid var(--pipboy-border);
+    border-radius: 5px;
+}
+
+.hp-bar {
+    color: var(--pipboy-danger);
+    font-weight: bold;
+}
+
+.caps {
+    color: var(--pipboy-warning);
+    font-weight: bold;
+}
+
+.btn-logout {
+    color: var(--pipboy-bright);
+    text-decoration: none;
+    padding: 8px 16px;
+    border: 2px solid var(--pipboy-border);
+    border-radius: 5px;
+    transition: all 0.3s;
+}
+
+.btn-logout:hover {
+    background: var(--pipboy-border);
+    box-shadow: 0 0 15px var(--pipboy-shadow);
+}
+
+/* ============================================
+   MAIN CONTENT
+   ============================================ */
+.pipboy-main {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+    gap: 20px;
+    padding: 25px;
+    flex: 1;
+    z-index: 2;
+}
+
+.panel {
+    background: var(--pipboy-dark);
+    border: 2px solid var(--pipboy-border);
+    border-radius: 10px;
+    padding: 20px;
+    box-shadow: 0 0 20px rgba(0, 0, 0, 0.3);
+}
+
+.panel h2 {
+    color: var(--pipboy-bright);
+    border-bottom: 2px solid var(--pipboy-border);
+    padding-bottom: 10px;
+    margin-bottom: 15px;
+    font-size: 18px;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+}
+
+/* ============================================
+   STATUS PANEL
+   ============================================ */
+.stats-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 10px;
+    font-size: 14px;
+}
+
+.stats-grid div {
+    padding: 8px;
+    background: var(--pipboy-bg);
+    border: 1px solid var(--pipboy-border);
+    border-radius: 5px;
+}
+
+.mission-box {
+    margin-top: 15px;
+    padding: 15px;
+    background: var(--pipboy-bg);
+    border-left: 4px solid var(--pipboy-warning);
+    font-size: 14px;
+    line-height: 1.6;
+}
+
+.shock-warning {
+    margin-top: 15px;
+    padding: 10px;
+    background: rgba(255, 102, 102, 0.2);
+    border: 1px solid var(--pipboy-danger);
+    color: var(--pipboy-danger);
+    text-align: center;
+    animation: blink 1s infinite;
+}
+
+/* ============================================
+   LOCATION PANEL
+   ============================================ */
+.location-info {
+    line-height: 1.8;
+}
+
+.location-info strong {
+    font-size: 18px;
+    color: var(--pipboy-bright);
+}
+
+.coords {
+    color: var(--pipboy-warning);
+    font-size: 12px;
+    margin-left: 10px;
+}
+
+.location-desc {
+    margin-top: 10px;
+    padding: 10px;
+    background: var(--pipboy-bg);
+    border: 1px solid var(--pipboy-border);
+    border-radius: 5px;
+    font-style: italic;
+}
+
+.quote-box {
+    margin-top: 15px;
+    padding: 15px;
+    background: var(--pipboy-bg);
+    border-left: 4px solid var(--pipboy-bright);
+    font-style: italic;
+    color: var(--pipboy-bright);
+}
+
+.rad-warning {
+    margin-top: 10px;
+    padding: 10px;
+    background: rgba(255, 204, 0, 0.2);
+    border: 1px solid var(--pipboy-warning);
+    color: var(--pipboy-warning);
+    text-align: center;
+    animation: blink 2s infinite;
+}
+
+/* ============================================
+   NAVIGATION PANEL
+   ============================================ */
+.compass {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+}
+
+.compass-row {
+    display: flex;
+    gap: 10px;
+}
+
+.btn-move {
+    width: 60px;
+    height: 60px;
+    background: var(--pipboy-bg);
+    border: 2px solid var(--pipboy-border);
+    color: var(--pipboy-bright);
+    font-size: 24px;
+    cursor: pointer;
+    border-radius: 8px;
+    transition: all 0.3s;
+    font-family: 'Courier New', monospace;
+}
+
+.btn-move:hover:not(:disabled) {
+    background: var(--pipboy-border);
+    box-shadow: 0 0 20px var(--pipboy-shadow);
+    transform: scale(1.1);
+}
+
+.btn-move:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+}
+
+.btn-action {
+    width: 60px;
+    height: 60px;
+    background: var(--pipboy-warning);
+    border: 2px solid var(--pipboy-border);
+    color: #000;
+    font-size: 24px;
+    cursor: pointer;
+    border-radius: 8px;
+    font-family: 'Courier New', monospace;
+}
+
+.btn-dungeon {
+    display: block;
+    margin-top: 20px;
+    padding: 15px;
+    background: var(--pipboy-bg);
+    border: 2px solid var(--pipboy-danger);
+    color: var(--pipboy-danger);
+    text-align: center;
+    text-decoration: none;
+    font-weight: bold;
+    border-radius: 8px;
+    transition: all 0.3s;
+}
+
+.btn-dungeon:hover {
+    background: var(--pipboy-danger);
+    color: #000;
+    box-shadow: 0 0 20px rgba(255, 102, 102, 0.6);
+}
+
+.shock-message {
+    color: var(--pipboy-danger);
+    text-align: center;
+    padding: 20px;
+    font-style: italic;
+}
+
+/* ============================================
+   MESSAGES
+   ============================================ */
+.messages-panel, .errors-panel {
+    grid-column: 1 / -1;
+}
+
+.message {
+    padding: 12px 15px;
+    margin-bottom: 10px;
+    border-radius: 5px;
+    border-left: 4px solid;
+}
+
+.message-info {
+    background: rgba(76, 175, 80, 0.2);
+    border-color: var(--pipboy-bright);
+    color: var(--pipboy-bright);
+}
+
+.message-warning {
+    background: rgba(255, 204, 0, 0.2);
+    border-color: var(--pipboy-warning);
+    color: var(--pipboy-warning);
+}
+
+.message-error {
+    background: rgba(255, 102, 102, 0.2);
+    border-color: var(--pipboy-danger);
+    color: var(--pipboy-danger);
+}
+
+/* ============================================
+   FOOTER
+   ============================================ */
+.pipboy-footer {
+    display: flex;
+    justify-content: space-between;
+    padding: 15px 25px;
+    border-top: 3px solid var(--pipboy-border);
+    background: var(--pipboy-dark);
+    font-size: 12px;
+    color: var(--pipboy-bright);
+    z-index: 2;
+}
+
+/* ============================================
+   ANIMATIONS
+   ============================================ */
+@keyframes flicker {
+    0%, 100% { opacity: 1; }
+    5% { opacity: 0.8; }
+    10% { opacity: 1; }
+    15% { opacity: 0.9; }
+    50% { opacity: 1; }
+    55% { opacity: 0.7; }
+    60% { opacity: 1; }
+}
+
+@keyframes blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}
+
+/* ============================================
+   RESPONSIVE
+   ============================================ */
+@media (max-width: 768px) {
+    .pipboy-main {
+        grid-template-columns: 1fr;
+    }
+    
+    .pipboy-header {
+        flex-direction: column;
+        gap: 15px;
+    }
+    
+    .header-left, .header-right {
+        width: 100%;
+        justify-content: center;
+    }
+    
+    .compass-row {
+        gap: 5px;
+    }
+    
+    .btn-move {
+        width: 50px;
+        height: 50px;
+        font-size: 20px;
+    }
+}
