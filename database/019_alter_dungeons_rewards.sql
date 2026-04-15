@@ -7,11 +7,12 @@ ADD COLUMN reward_item_id INT UNSIGNED DEFAULT NULL COMMENT 'ID предмета
 ADD COLUMN reward_xp INT UNSIGNED DEFAULT 0 COMMENT 'Опыт за прохождение',
 ADD COLUMN reward_caps INT UNSIGNED DEFAULT 0 COMMENT 'Крышки за прохождение';
 
--- Добавляем внешние ключи
+-- Добавляем внешние ключи (monsters.id имеет INT AUTO_INCREMENT, поэтому совместим)
 ALTER TABLE dungeons
 ADD CONSTRAINT fk_dungeon_boss FOREIGN KEY (boss_id) REFERENCES monsters(id) ON DELETE SET NULL;
 
 -- Индекс для быстрого поиска данжей по боссу
 CREATE INDEX idx_dungeons_boss ON dungeons(boss_id);
 
-COMMENT ON TABLE dungeons IS 'Подземелья с ручным управлением, боссами и наградами';
+-- Комментарий к таблице (если поддерживается версией MySQL)
+-- ALTER TABLE dungeons COMMENT = 'Подземелья с ручным управлением, боссами и наградами';

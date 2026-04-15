@@ -40,6 +40,9 @@ CREATE TABLE IF NOT EXISTS map_nodes (
     INDEX idx_coords (pos_x, pos_y)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- Примечание: Дополнительные поля (biome, is_impassable, radiation_level, weather_id)
+-- добавляются в миграции 021_massive_world_mechanics.sql
+
 -- 3. Граф переходов (кто с кем соединён)
 DROP TABLE IF EXISTS map_adjacency;
 CREATE TABLE IF NOT EXISTS map_adjacency (

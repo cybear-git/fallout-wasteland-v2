@@ -12,10 +12,12 @@ CREATE TABLE IF NOT EXISTS monsters (
     spawn_weight TINYINT UNSIGNED DEFAULT 10,
     habitat VARCHAR(100) DEFAULT 'wasteland',
     is_active TINYINT(1) DEFAULT 1,
+    is_boss TINYINT(1) DEFAULT 0 COMMENT 'Флаг босса (1 = босс)',
     loot_table JSON DEFAULT NULL,
     
     INDEX idx_key (monster_key),
     INDEX idx_habitat (habitat),
     INDEX idx_active_spawn (is_active, spawn_weight),
-    INDEX idx_level_status (level, status, speed)
+    INDEX idx_level_status (level, status, speed),
+    INDEX idx_boss (is_boss)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
