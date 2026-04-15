@@ -2,7 +2,7 @@ CREATE TABLE IF NOT EXISTS locations (
     id INT AUTO_INCREMENT PRIMARY KEY,
     pos_x INT NOT NULL,
     pos_y INT NOT NULL,
-    tile_type ENUM('wasteland','city','dungeon','radzone','vault','mountain') DEFAULT 'wasteland',
+    tile_type ENUM('wasteland','city','dungeon','radzone','vault','mountain','forest','desert','ruins','camp') DEFAULT 'wasteland',
     tile_name VARCHAR(100) NULL,
     description TEXT NULL,
     danger_level TINYINT UNSIGNED DEFAULT 1,

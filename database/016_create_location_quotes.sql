@@ -5,7 +5,7 @@
 CREATE TABLE IF NOT EXISTS location_quotes (
     id INT AUTO_INCREMENT PRIMARY KEY,
     quote_text TEXT NOT NULL COMMENT 'Текст фразы',
-    tile_type ENUM('wasteland','city','dungeon','radzone','vault','mountain','ruins','desert','forest','military','camp') NOT NULL,
+    tile_type ENUM('wasteland','city','dungeon','radzone','vault','mountain','forest','desert','ruins','camp') NOT NULL,
     mood ENUM('neutral', 'danger', 'discovery', 'lore', 'humor') DEFAULT 'neutral' COMMENT 'Настроение фразы',
     source VARCHAR(100) DEFAULT NULL COMMENT 'Источник (игра, персонаж, книга)',
     is_active TINYINT(1) DEFAULT 1,
@@ -128,15 +128,7 @@ INSERT INTO location_quotes (quote_text, tile_type, mood, source, is_active) VAL
 ('A stream cuts through the woods. Water source.', 'forest', 'discovery', NULL, 1),
 ('Predators hunt in these woods. Stay alert.', 'forest', 'danger', NULL, 1),
 
--- MILITARY (6 фраз)
-('Turrets track movement automatically.', 'military', 'danger', NULL, 1),
-('Barbed wire and sandbags. Fortified position.', 'military', 'neutral', NULL, 1),
-('Ammunition crates stacked neatly.', 'military', 'discovery', NULL, 1),
-('Command center access restricted.', 'military', 'discovery', NULL, 1),
-('NCR insignia faded on the banner.', 'military', 'lore', NULL, 1),
-('Artillery shells line the perimeter.', 'military', 'danger', NULL, 1),
-
--- CAMP (6 фраз)
+-- CAMP (12 фраз)
 ('Campfire embers still warm.', 'camp', 'neutral', NULL, 1),
 ('Traders set up temporary shelters.', 'camp', 'neutral', NULL, 1),
 ('Supply crates marked with faction symbols.', 'camp', 'discovery', NULL, 1),

@@ -1,9 +1,2 @@
-```gitignore
-# Database migration artifacts
-*.sql.bak
-*.sql~
-
-# Temporary shell script artifacts
-*.sh.bak
-*.sh~
-```
+# Migration report
+MIGRATION_FIX_REPORT.md
