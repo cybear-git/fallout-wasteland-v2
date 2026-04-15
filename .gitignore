@@ -1,5 +1,1 @@
-```sql
--- This project contains only SQL database files (.sql)
--- No compiled artifacts, dependencies, or temporary files to ignore
--- Source code files (.sql) should be tracked in version control
-```
+Nothing should be ignored based on the provided file changes, as they consist only of markdown documentation files (.md) which are source/config files.
