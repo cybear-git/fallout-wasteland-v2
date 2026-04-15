@@ -9,4 +9,3 @@ mysql -u root -p fallout_wastelands_v2 < database/005_create_monsters.sql
 ini_set('display_errors', 1);
 ini_set('display_startup_errors', 1);
 error_reporting(E_ALL);
-// ==============================================================================
