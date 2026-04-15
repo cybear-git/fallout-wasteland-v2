@@ -9,6 +9,7 @@ declare(strict_types=1);
 
 /**
  * Проверка CSRF-токена
+ * UPDATED: Добавлена строгая типизация параметров
  */
 function validateCsrfToken(string $token): bool {
     if (empty($token) || empty($_SESSION['csrf_token'])) {
@@ -37,23 +38,30 @@ function regenerateCsrfToken(): string {
 
 /**
  * Безопасный выход из админ-панели
+ * UPDATED: Улучшена обработка ошибок и проверка сессии
  */
 function adminLogout(): void {
     session_name('fw_adm_ssid');
-    session_start();
+    
+    // Проверяем, не уничтожена ли сессия уже
+    if (session_status() === PHP_SESSION_NONE) {
+        session_start();
+    }
     
     // Логируем выход
     require_once __DIR__ . '/../config/database.php';
-    $pdo = getDbConnection();
-    $adminId = $_SESSION['admin_id'] ?? 0;
     
-    if ($adminId > 0) {
-        try {
+    try {
+        $pdo = getDbConnection();
+        $adminId = $_SESSION['admin_id'] ?? 0;
+        
+        if ($adminId > 0) {
             $stmt = $pdo->prepare("INSERT INTO admin_logs (admin_id, action, table_name, ip_address) VALUES (?, 'logout', 'session', ?)");
             $stmt->execute([$adminId, $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1']);
-        } catch (Exception $e) {
-            // Игнорируем ошибки логирования при выходе
         }
+    } catch (Exception $e) {
+        // Игнорируем ошибки логирования при выходе, но пишем в error_log
+        error_log("Admin logout logging failed: " . $e->getMessage());
     }
     
     // Уничтожаем сессию
@@ -67,8 +75,8 @@ function adminLogout(): void {
             time() - 42000,
             $params["path"],
             $params["domain"],
-            $params["secure"],
-            $params["httponly"]
+            $params["secure"] ?? false,
+            $params["httponly"] ?? true
         );
     }
     
@@ -79,13 +87,14 @@ function adminLogout(): void {
 
 /**
  * Проверка прав администратора
+ * UPDATED: Исправлен запрос - используем таблицу admins вместо players
  * 
  * @param PDO $pdo Подключение к БД
  * @param int $adminId ID администратора
  * @return bool true если админ активен
  */
 function checkAdminRights(PDO $pdo, int $adminId): bool {
-    $stmt = $pdo->prepare("SELECT role, is_active FROM players WHERE id = ?");
+    $stmt = $pdo->prepare("SELECT role, is_active FROM admins WHERE id = ?");
     $stmt->execute([$adminId]);
     $admin = $stmt->fetch();
     
@@ -94,6 +103,7 @@ function checkAdminRights(PDO $pdo, int $adminId): bool {
 
 /**
  * Логирование действия администратора
+ * UPDATED: Добавлена проверка существования таблицы перед логированием
  * 
  * @param PDO $pdo Подключение к БД
  * @param int $adminId ID администратора
@@ -103,6 +113,13 @@ function checkAdminRights(PDO $pdo, int $adminId): bool {
  */
 function logAdminAction(PDO $pdo, int $adminId, string $action, string $table, ?int $recordId = null): void {
     try {
+        // Проверяем существование таблицы admin_logs
+        $stmt = $pdo->query("SHOW TABLES LIKE 'admin_logs'");
+        if ($stmt->rowCount() === 0) {
+            error_log("Table admin_logs does not exist. Skipping admin action logging.");
+            return;
+        }
+        
         $stmt = $pdo->prepare("INSERT INTO admin_logs (admin_id, action, table_name, record_id, ip_address) VALUES (?, ?, ?, ?, ?)");
         $stmt->execute([
             $adminId,

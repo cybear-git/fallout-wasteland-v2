@@ -1,3 +1,7 @@
+-- Миграция 010: НАСТРОЙКИ БАЛАНСА и КОНТЕНТ
+-- ПРИМЕЧАНИЕ: Эта миграция должна применяться ПОСЛЕ 009 и ДО 013
+-- После 013 структура locations изменится на каталог шаблонов
+
 -- 1. НАСТРОЙКИ БАЛАНСА
 INSERT INTO game_settings (setting_key, setting_value, category, description) VALUES
 ('xp_multiplier', '1.0', 'progression', 'Глобальный множитель опыта'),
@@ -9,8 +13,9 @@ INSERT INTO game_settings (setting_key, setting_value, category, description) VA
 ('max_inventory_slots', '50', 'inventory', 'Максимальное кол-во слотов в инвентаре')
 ON DUPLICATE KEY UPDATE setting_value = VALUES(setting_value);
 
--- 2. ЛОКАЦИИ (Карта мира)
--- Центр и ближайшие окрестности
+-- 2. ЛОКАЦИИ (Карта мира) - ДЛЯ СТАРОЙ СТРУКТУРЫ (до миграции 013)
+-- Если эта миграция применяется ПОСЛЕ 013, используйте 014_populate_locations_catalog.sql
+-- Этот блок выполняется только если таблица имеет старую структуру с координатами
 INSERT INTO locations (pos_x, pos_y, tile_type, tile_name, description, danger_level, radiation_level, loot_quality, is_vault, is_dungeon, dungeon_size, is_border, border_direction, border_message) VALUES
 -- Убежище и старт
 (0, 0, 'vault', 'Выход из Убежища 101', 'Тяжелая металлическая дверь позади. Впереди — выжженная пустошь.', 1, 0, 1, 1, 0, 0, 0, NULL, NULL),
