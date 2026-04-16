@@ -1,311 +1,167 @@
 <?php
 /**
- * ГЕНЕРАТОР МИРА: ПУСТОШЬ 160x90
- * - Биомы: Горы (Запад), Леса (Север), Пустошь (Центр), Мексика (Юг), Братство (Восток)
- * - 8 Убежищ в безопасных зонах
- * - Непроходимые границы (3-4 клетки)
+ * ГЕНЕРАТОР МИРА: ПУСТОШЬ
  */
 
 require_once __DIR__ . '/../config/database.php';
 
-// КОНФИГУРАЦИЯ
-$mapWidth = 160;
-$mapHeight = 90;
-$borderSize = 4; // Толщина непроходимой зоны
-$vaultCount = 8;
+$WIDTH = 80;
+$HEIGHT = 50;
+$BORDER = 3;
+
+function isInCluster(int $x, int $y, int $cx, int $cy, int $rx, int $ry): bool {
+    return (abs($x - $cx) <= $rx && abs($y - $cy) <= $ry);
+}
+
+echo "🗺️ Генерация карты мира {$WIDTH}x{$HEIGHT}...\n";
 
 try {
-    $pdo->beginTransaction();
+    $pdo = getDbConnection();
 
-    echo "🗺️  Начинаю генерацию карты {$mapWidth}x{$mapHeight}...\n";
-
-    // 1. Очистка старых данных
+    $pdo->exec("SET FOREIGN_KEY_CHECKS = 0");
+    $pdo->exec("TRUNCATE TABLE map_adjacency");
     $pdo->exec("TRUNCATE TABLE map_nodes");
-    $pdo->exec("TRUNCATE TABLE vault_keepers");
-    echo "✅ Таблицы очищены.\n";
+    $pdo->exec("SET FOREIGN_KEY_CHECKS = 1");
+    echo "✅ Таблицы очищены\n";
 
-    // 2. Подготовка утверждений
-    $stmtInsertNode = $pdo->prepare("
-        INSERT INTO map_nodes (x, y, tile_type, biome, is_spawn_point, radiation_level, name, description)
-        VALUES (:x, :y, :tile_type, :biome, :is_spawn, :rad, :name, :desc)
+    // Типы локаций
+    $types = [];
+    $stmt = $pdo->query("SELECT id, type_name FROM location_types");
+    while ($row = $stmt->fetch()) {
+        $types[$row['type_name']] = (int)$row['id'];
+    }
+
+    // Локации
+    $vaultIds = [];
+    $dungeonIds = [];
+    $stmt = $pdo->query("SELECT id, is_vault, is_dungeon FROM locations");
+    while ($row = $stmt->fetch()) {
+        if ($row['is_vault']) $vaultIds[] = (int)$row['id'];
+        if ($row['is_dungeon']) $dungeonIds[] = (int)$row['id'];
+    }
+
+    // ID типов
+    $typeWasteland = $types['Пустошь'] ?? 16;
+    $typeRuins = $types['Руины'] ?? 25;
+    $typeRadzone = $types['Радиоактивная зона'] ?? 19;
+    $typeForest = $types['Лес'] ?? 23;
+    $typeMountain = $types['Горы'] ?? 22;
+    $typeDesert = $types['Пустыня'] ?? 24;
+    $typeDungeon = $types['Подземелье'] ?? 18;
+    $typeVaultExt = $types['Вход в Убежище'] ?? 21;
+    $typeMilitaryBase = $types['Комплекс Братства'] ?? 28;
+
+    echo "   Тип Пустошь: {$typeWasteland}\n";
+    echo "   Тип Горы: {$typeMountain}\n";
+
+    $stmtInsert = $pdo->prepare("
+        INSERT INTO map_nodes (pos_x, pos_y, location_id, is_border, border_direction, location_type_id)
+        VALUES (?, ?, ?, ?, ?, ?)
     ");
 
-    $stmtInsertKeeper = $pdo->prepare("
-        INSERT INTO vault_keepers (vault_id, greeting_text, mission_text, bonus_armor, bonus_charisma, starter_caps, starter_stimpak, starter_antirad)
-        VALUES (:vault_id, :greeting, :mission, 2, 1, 30, 3, 1)
-    );
+    $grid = [];
+    for ($y = 0; $y < $HEIGHT; $y++) {
+        for ($x = 0; $x < $WIDTH; $x++) {
+            $isBorder = false;
+            $borderDir = null;
+            $typeId = $typeWasteland;
 
-    $missions = [
-        'Найди Источник Живой Воды. Легенды говорят, что он может очистить землю. Иди и верни надежду.',
-        'В Пустоши потеряна технология предтеч. Найди её, пока она не попала к рейдерам.',
-        'Собери советы старейших племен. Только единство спасет нас от угасания.',
-        'Уничтожь гнездо Когтей Смерти на севере. Они угрожают торговому пути.',
-        'Найди чертежи силовой брони в бункере Братства. Если сможешь выжить.',
-        'Очисти завод от рейдеров. Местные жители заплатят крышками.',
-        'Исследуй пещеры на западе. Там скрыт вход в старое убежище.',
-        'Доставь письмо старейшине поселения в центре пустоши.'
-    ];
-
-    $greetings = [
-        'Добро пожаловать домой, Избранный. Я ждал тебя. Пустошь сурова, но ты сильнее.',
-        'Приветствую, житель. Твой комбинезон готов. Путь лежит через огонь и кровь.',
-        'Ты вышел из криокамеры последним. Мир изменился. Измени его и ты.',
-        'Выживший! Мы думали, система селекции дала сбой. Но нет — ты здесь.',
-        'Наконец-то! Убежищу нужен герой. А герою — цель.',
-        'Твой предок подписал контракт с Vault-Tec. Теперь твой черёд платить.',
-        'Мы хранили этот комбинезон сто лет. Он ждал именно тебя.',
-        'Выход за этой дверью. Обратного пути нет. Ты готов?'
-    ];
-
-    $vaultLocations = []; // Для отслеживания занятых зон
-
-    // 3. Генерация сетки
-    $nodesCreated = 0;
-    for ($y = 0; $y < $mapHeight; $y++) {
-        for ($x = 0; $x < $mapWidth; $x++) {
-            $biome = 'wasteland';
-            $tileType = 'wasteland';
-            $radLevel = 0;
-            $isSpawn = 0;
-            $name = null;
-            $desc = null;
-
-            // ЗАПАД: Горы (непроходимо)
-            if ($x < $borderSize) {
-                $biome = 'mountains';
-                $tileType = 'mountain';
-                $radLevel = 0;
-                $desc = 'Непроходимые скалы. Дальше только смерть.';
+            // Границы
+            if ($x < $BORDER) {
+                $isBorder = true;
+                $borderDir = 'w';
+                $typeId = $typeMountain;
+            } elseif ($x >= $WIDTH - $BORDER) {
+                $isBorder = true;
+                $borderDir = 'e';
+                $typeId = $typeMilitaryBase;
+            } elseif ($y < $BORDER) {
+                $isBorder = true;
+                $borderDir = 'n';
+                $typeId = $typeMountain;
+            } elseif ($y >= $HEIGHT - $BORDER) {
+                $isBorder = true;
+                $borderDir = 's';
+                $typeId = $typeDesert;
             }
-            // ВОСТОК: Земли Братства Стали (непроходимо)
-            elseif ($x >= $mapWidth - $borderSize) {
-                $biome = 'brotherhood_lands';
-                $tileType = 'military_base';
-                $radLevel = 0;
-                $desc = 'Патруль Братства Стали. Проход запрещен под страхом расстрела.';
+            // Кластеры
+            elseif (isInCluster($x, $y, 20, 15, 8, 8) || isInCluster($x, $y, 55, 30, 6, 6)) {
+                $typeId = $typeRuins;
             }
-            // СЕВЕР: Леса и Холод (непроходимо)
-            elseif ($y < $borderSize) {
-                $biome = 'frozen_forest';
-                $tileType = 'forest';
-                $radLevel = 0;
-                $desc = 'Ледяной ветер и мутантские деревья. Путь закрыт.';
+            elseif (isInCluster($x, $y, 40, 25, 5, 5) || isInCluster($x, $y, 10, 35, 4, 4)) {
+                $typeId = $typeRadzone;
             }
-            // ЮГ: Пустыня Мексика (непроходимо)
-            elseif ($y >= $mapHeight - $borderSize) {
-                $biome = 'mexico_desert';
-                $tileType = 'wasteland';
-                $radLevel = 5;
-                $desc = 'Выжженная пустыня. Дальше только радиация и смерть.';
-            }
-            // ЦЕНТР: Пустошь + Предгорья (безопасно для убежищ)
-            else {
-                // Предгорья у границ гор (безопасно, но красиво)
-                if ($x >= $borderSize && $x < $borderSize + 10) {
-                    $biome = 'foothills';
-                    $tileType = 'wasteland';
-                    $radLevel = 0;
-                } else {
-                    $biome = 'wasteland';
-                    $tileType = 'wasteland';
-                    
-                    // Случайные аномалии радиации в центре
-                    if (rand(1, 100) <= 5) {
-                        $radLevel = rand(5, 20);
-                        $tileType = 'wasteland';
-                    }
-                }
+            elseif ($x < 20 && $y > 20) {
+                $typeId = $typeForest;
             }
 
-            // Вставка ноды
-            $stmtInsertNode->execute([
-                ':x' => $x,
-                ':y' => $y,
-                ':tile_type' => $tileType,
-                ':biome' => $biome,
-                ':is_spawn' => $isSpawn,
-                ':rad' => $radLevel,
-                ':name' => $name,
-                ':desc' => $desc
-            ]);
-            $nodesCreated++;
+            $stmtInsert->execute([$x, $y, null, $isBorder ? 1 : 0, $borderDir, $typeId]);
+            $grid[$y][$x] = $typeId;
         }
     }
-    echo "✅ Создано {$nodesCreated} узлов карты.\n";
 
-    // 4. Размещение 8 Убежищ в безопасных зонах (предгорья или центр)
-    echo "🏠 Размещение {$vaultCount} убежищ...\n";
-    
-    $placedVaults = 0;
-    $attempts = 0;
-    $minDistance = 15; // Минимальное расстояние между убежищами
+    echo "✅ Создано " . ($WIDTH * $HEIGHT) . " клеток\n";
 
-    while ($placedVaults < $vaultCount && $attempts < 1000) {
-        $attempts++;
-        
-        // Генерируем координаты в безопасной зоне (предгорья или центр)
-        $x = rand($borderSize + 2, $mapWidth - $borderSize - 3);
-        $y = rand($borderSize + 2, $mapHeight - $borderSize - 3);
-        
-        // Проверка: не слишком ли близко к границам (чтобы было место для выхода)
-        if ($x < $borderSize + 5 || $x > $mapWidth - $borderSize - 5 || 
-            $y < $borderSize + 5 || $y > $mapHeight - $borderSize - 5) {
-            continue;
-        }
+    // Убежища
+    $placed = 0;
+    for ($i = 0; $i < 5 && $placed < 5; $i++) {
+        $x = rand($BORDER + 5, $WIDTH - $BORDER - 5);
+        $y = rand($BORDER + 5, $HEIGHT - $BORDER - 5);
 
-        // Проверка расстояния до других убежищ
         $tooClose = false;
-        foreach ($vaultLocations as $vx => $vy) {
-            $dist = sqrt(pow($x - $vx, 2) + pow($y - $vy, 2));
-            if ($dist < $minDistance) {
-                $tooClose = true;
-                break;
+        foreach ($grid as $gy => $row) {
+            foreach ($row as $gx => $gt) {
+                if ($gt == $typeVaultExt) {
+                    $dist = sqrt(pow($x - $gx, 2) + pow($y - $gy, 2));
+                    if ($dist < 15) { $tooClose = true; break 2; }
+                }
             }
         }
         if ($tooClose) continue;
 
-        // Получаем ID созданной ноды
-        $stmtGetNode = $pdo->prepare("SELECT id FROM map_nodes WHERE x = :x AND y = :y");
-        $stmtGetNode->execute([':x' => $x, ':y' => $y]);
-        $node = $stmtGetNode->fetch(PDO::FETCH_ASSOC);
-        
-        if (!$node) continue;
-        
-        $nodeId = $node['id'];
-
-        // Обновляем ноду: делаем её убежищем
-        $stmtUpdateNode = $pdo->prepare("
-            UPDATE map_nodes 
-            SET tile_type = 'vault_ext', 
-                biome = 'vault_zone', 
-                is_spawn_point = 1, 
-                radiation_level = 0,
-                name = :name,
-                description = 'Вход в убежище Vault-Tec. Символ шестеренки едва виден на металле.'
-            WHERE id = :id
-        ");
-        $vaultName = "Убежище-" . ($placedVaults + 1);
-        $stmtUpdateNode->execute([
-            ':name' => $vaultName,
-            ':id' => $nodeId
-        ]);
-
-        // Создаем Хранителя для этого убежища
-        $missionKey = $placedVaults % count($missions);
-        $greetingKey = $placedVaults % count($greetings);
-        
-        $stmtInsertKeeper->execute([
-            ':vault_id' => $nodeId,
-            ':greeting' => $greetings[$greetingKey],
-            ':mission' => $missions[$missionKey]
-        ]);
-
-        $vaultLocations[$x] = $y;
-        $placedVaults++;
-        echo "   📍 Убежище #" . $placedVaults . " размещено на координатах ($x, $y)\n";
+        $vId = !empty($vaultIds) ? $vaultIds[$placed % count($vaultIds)] : null;
+        $pdo->prepare("UPDATE map_nodes SET location_type_id = ? WHERE pos_x = ? AND pos_y = ?")
+            ->execute([$typeVaultExt, $x, $y]);
+        if ($vId) {
+            $pdo->prepare("UPDATE map_nodes SET location_id = ? WHERE pos_x = ? AND pos_y = ?")
+                ->execute([$vId, $x, $y]);
+        }
+        $grid[$y][$x] = $typeVaultExt;
+        $placed++;
+        echo "   🏠 Убежище #{$placed} на ({$x}, {$y})\n";
     }
 
-    if ($placedVaults < $vaultCount) {
-        echo "⚠️  Не удалось разместить все убежища. Размещено: $placedVaults из $vaultCount\n";
-    } else {
-        echo "✅ Все убежища успешно размещены.\n";
-    }
+    // Данжи
+    $placedD = 0;
+    for ($i = 0; $i < 100 && $placedD < 4; $i++) {
+        $x = rand($BORDER + 10, $WIDTH - $BORDER - 10);
+        $y = rand($BORDER + 10, $HEIGHT - $BORDER - 10);
+        $typeId = $grid[$y][$x] ?? 0;
 
-    // 5. Добавление нескольких городов/заводов (кластеры)
-    echo "🏭 Генерация крупных локаций (города, заводы)...\n";
-    $largeLocationsCount = 12;
-    $placedLarge = 0;
-    $attempts = 0;
-    
-    while ($placedLarge < $largeLocationsCount && $attempts < 500) {
-        $attempts++;
-        $x = rand($borderSize + 10, $mapWidth - $borderSize - 10);
-        $y = rand($borderSize + 10, $mapHeight - $borderSize - 10);
-        
-        // Проверка: не слишком ли близко к убежищам
-        $tooCloseToVault = false;
-        foreach ($vaultLocations as $vx => $vy) {
-            $dist = sqrt(pow($x - $vx, 2) + pow($y - $vy, 2));
-            if ($dist < 20) {
-                $tooCloseToVault = true;
-                break;
+        if ($typeId == $typeWasteland || $typeId == $typeRuins) {
+            $dId = !empty($dungeonIds) ? $dungeonIds[$placedD % count($dungeonIds)] : null;
+            $pdo->prepare("UPDATE map_nodes SET location_type_id = ? WHERE pos_x = ? AND pos_y = ?")
+                ->execute([$typeDungeon, $x, $y]);
+            if ($dId) {
+                $pdo->prepare("UPDATE map_nodes SET location_id = ? WHERE pos_x = ? AND pos_y = ?")
+                    ->execute([$dId, $x, $y]);
             }
-        }
-        if ($tooCloseToVault) continue;
-
-        // Размер кластера (3x3 или 4x4)
-        $size = rand(3, 4);
-        $type = rand(0, 1) ? 'ruins_city' : 'factory';
-        $namePrefix = $type === 'ruins_city' ? 'Руины города' : 'Завод';
-        $name = $namePrefix . ' #' . ($placedLarge + 1);
-
-        $clusterNodes = [];
-        $validCluster = true;
-
-        for ($dy = 0; $dy < $size; $dy++) {
-            for ($dx = 0; $dx < $size; $dx++) {
-                $cx = $x + $dx;
-                $cy = $y + $dy;
-                
-                if ($cx >= $mapWidth - $borderSize || $cy >= $mapHeight - $borderSize) {
-                    $validCluster = false;
-                    break;
-                }
-                
-                $clusterNodes[] = ['x' => $cx, 'y' => $cy];
-            }
-            if (!$validCluster) break;
-        }
-
-        if (!$validCluster) continue;
-
-        // Обновляем ноды кластера
-        foreach ($clusterNodes as $coord) {
-            $stmtGetNode = $pdo->prepare("SELECT id, tile_type FROM map_nodes WHERE x = :x AND y = :y");
-            $stmtGetNode->execute([':x' => $coord['x'], ':y' => $coord['y']]);
-            $node = $stmtGetNode->fetch(PDO::FETCH_ASSOC);
-            
-            if ($node && $node['tile_type'] === 'wasteland') {
-                $stmtUpdate = $pdo->prepare("
-                    UPDATE map_nodes 
-                    SET tile_type = :type, 
-                        biome = :biome,
-                        name = :name,
-                        description = :desc
-                    WHERE id = :id
-                ");
-                $desc = $type === 'ruins_city' 
-                    ? 'Разрушенные здания занимают несколько кварталов. Опасно.' 
-                    : 'Промышленный комплекс предвоенной эпохи. Много хлама.';
-                
-                $stmtUpdate->execute([
-                    ':type' => $type,
-                    ':biome' => $type,
-                    ':name' => $name,
-                    ':desc' => $desc,
-                    ':id' => $node['id']
-                ]);
-            } else {
-                $validCluster = false; // Занято другой структурой
-                break;
-            }
-        }
-
-        if ($validCluster) {
-            $placedLarge++;
-            echo "   🏢 Локация '$name' ($size x" . "$size) размещена.\n";
+            $grid[$y][$x] = $typeDungeon;
+            $placedD++;
+            echo "   ⚔️ Данж #{$placedD} на ({$x}, {$y})\n";
         }
     }
 
-    $pdo->commit();
-    echo "\n🎉 ГЕНЕРАЦИЯ ЗАВЕРШЕНА!\n";
-    echo "   - Карта: {$mapWidth}x{$mapHeight}\n";
-    echo "   - Убежищ: $placedVaults\n";
-    echo "   - Крупных локаций: $placedLarge\n";
-    echo "   - Общее узлов: $nodesCreated\n";
+    // Персонажи в центр
+    $pdo->prepare("UPDATE characters SET pos_x = ?, pos_y = ? WHERE pos_x = 0 AND pos_y = 0 LIMIT 10")
+        ->execute([floor($WIDTH / 2), floor($HEIGHT / 2)]);
+
+    echo "\n🎉 КАРТА СГЕНЕРИРОВАНА!\n";
+    echo "   Размер: {$WIDTH}x{$HEIGHT}\n";
+    echo "   Убежищ: {$placed}\n";
+    echo "   Данжей: {$placedD}\n";
 
 } catch (Exception $e) {
-    $pdo->rollBack();
     echo "❌ ОШИБКА: " . $e->getMessage() . "\n";
     exit(1);
 }

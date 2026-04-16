@@ -1,14 +1,6 @@
 <?php
 declare(strict_types=1);
 
-/**
- * Админ-панель Fallout: Пустоши
- * Версия: 3.0 (Refactored)
- * 
- * @package FalloutWasteland
- * @author Admin
- */
-
 session_name('fw_adm_ssid');
 session_start([
     'cookie_httponly' => true,
@@ -17,10 +9,8 @@ session_start([
 ]);
 
 require_once __DIR__ . '/../config/database.php';
-require_once __DIR__ . '/../includes/auth.php';
 require_once __DIR__ . '/../includes/csrf.php';
 
-// 1. АВТОРИЗАЦИЯ И ПРОВЕРКА ПРАВ
 if (empty($_SESSION['admin_id'])) {
     header('Location: admin_login.php');
     exit;
@@ -28,549 +18,894 @@ if (empty($_SESSION['admin_id'])) {
 
 $pdo = getDbConnection();
 $adminId = (int)$_SESSION['admin_id'];
-$adminName = $_SESSION['admin_name'] ?? 'Admin';
 
-// Проверка роли и статуса администратора
-$stmt = $pdo->prepare("SELECT role, is_active FROM players WHERE id = ?");
+$stmt = $pdo->prepare("
+    SELECT p.is_active, r.role_name 
+    FROM players p 
+    JOIN roles r ON r.id = p.role_id 
+    WHERE p.id = ?
+");
 $stmt->execute([$adminId]);
 $admin = $stmt->fetch();
 
-if (!$admin || $admin['role'] !== 'admin' || $admin['is_active'] != 1) {
+if (!$admin || $admin['role_name'] !== 'admin' || $admin['is_active'] != 1) {
     session_destroy();
     header('Location: admin_login.php?error=revoked');
     exit;
 }
 
-// 2. РОУТИНГ
 $action = $_GET['action'] ?? 'dashboard';
 $id = isset($_GET['id']) ? (int)$_GET['id'] : 0;
-$page = isset($_GET['page']) ? max(1, (int)$_GET['page']) : 1;
-$limit = 50;
-
 $error = '';
 $success = '';
-$editData = null;
 $items = [];
 
-// 3. CSRF ВАЛИДАЦИЯ ДЛЯ POST
-if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    if (!validateCsrfToken($_POST['csrf_token'] ?? '')) {
-        $error = '❌ Неверный CSRF-токен';
-        $_POST = []; // Сброс данных
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && !validateCsrfToken($_POST['csrf_token'] ?? '')) {
+    $error = '❌ Неверный CSRF-токен';
+}
+
+try {
+    switch ($action) {
+        case 'users':
+            if (isset($_POST['toggle_active'])) {
+                $stmt = $pdo->prepare("UPDATE players SET is_active = NOT is_active WHERE id = ?");
+                $stmt->execute([$id]);
+                $success = 'Статус игрока изменён';
+            }
+            if (isset($_POST['delete_user'])) {
+                $stmt = $pdo->prepare("DELETE FROM players WHERE id = ?");
+                $stmt->execute([$id]);
+                $success = 'Игрок удалён';
+                header("Location: ?action=users");
+                exit;
+            }
+            break;
+            
+        case 'settings':
+            if (isset($_POST['save_setting'])) {
+                $stmt = $pdo->prepare("UPDATE game_settings SET setting_value = ? WHERE setting_key = ?");
+                $stmt->execute([$_POST['setting_value'], $_POST['setting_key']]);
+                $success = 'Настройка сохранена';
+            }
+            break;
+            
+        case 'logs':
+            if (isset($_POST['clear_logs'])) {
+                $pdo->exec("TRUNCATE TABLE admin_logs");
+                $success = 'Логи очищены';
+            }
+            break;
+            
+        case 'logout':
+            session_destroy();
+            header('Location: admin_login.php');
+            exit;
     }
-}
-        switch ($action) {
-            // --- ДАНЖИ ---
-            case 'dungeons':
-                // Генератор
-                if (isset($_POST['generate_dungeons'])) {
-                    $count = max(1, (int)$_POST['count']);
-                    $minLvl = (int)$_POST['min_lvl'];
-                    $maxLvl = max($minLvl, (int)$_POST['max_lvl']);
-                    $minSize = max(1, (int)$_POST['min_size']);
-                    $maxSize = max($minSize, (int)$_POST['max_size']);
-
-                    for ($i = 0; $i < $count; $i++) {
-                        $lvl = rand($minLvl, $maxLvl);
-                        $sx = rand($minSize, $maxSize); $sy = rand($minSize, $maxSize);
-                        $key = "gen_" . time() . "_$i";
-                        $bosses = ['deathclaw', 'super_mutant', 'raider_boss', 'mirelurk_king'];
-                        
-                        $stmt = $pdo->prepare("INSERT INTO dungeons (dungeon_key, name, min_level, boss_key, reward_json, respawn_hours) VALUES (?, ?, ?, ?, ?, 24)");
-                        $stmt->execute([$key, "Данж Ур.$lvl ($sx x $sy)", $lvl, $bosses[array_rand($bosses)], json_encode(['caps' => rand(50, 500), 'loot' => ['stimpak']])]);
-                        $dId = $pdo->lastInsertId();
-
-                        $nodes = [];
-                        for ($y=0; $y<$sy; $y++) for ($x=0; $x<$sx; $x++) {
-                            $type = 'corridor';
-                            if ($x==0 && $y==0) $type = 'entrance';
-                            elseif ($x==$sx-1 && $y==$sy-1) $type = 'exit';
-                            elseif (rand(1,10) > 8) $type = 'room';
-                            elseif (rand(1,10) > 9) $type = 'boss';
-                            $nodes[] = "($dId, $x, $y, '$type', 1)";
-                        }
-                        $pdo->exec("INSERT INTO dungeon_nodes (dungeon_id, pos_x, pos_y, tile_type, is_active) VALUES " . implode(',', $nodes));
-                    }
-                    $success = "✅ Сгенерировано $count данжей!";
-                }
-                // CRUD Данжа
-                elseif (isset($_POST['save_dungeon'])) {
-                    $caps = (int)($_POST['base_caps'] ?? 0);
-                    $keys = trim($_POST['loot_keys'] ?? '');
-                    $items = array_filter(array_map('trim', explode(',', $keys)));
-                    $reward = json_encode(['caps' => $caps, 'items' => $items]);
-
-                    $f = [
-                        'dungeon_key' => trim($_POST['dungeon_key']),
-                        'name' => trim($_POST['name']),
-                        'description' => trim($_POST['description']),
-                        'min_level' => (int)($_POST['min_level'] ?? 1),
-                        'boss_key' => trim($_POST['boss_key'] ?? ''),
-                        'respawn_hours' => (int)($_POST['respawn_hours'] ?? 24),
-                        'reward_json' => $reward,
-                        'is_active' => (int)(!!$_POST['is_active'])
-                    ];
-                    if ((int)$_POST['id'] > 0) {
-                        $f['id'] = (int)$_POST['id'];
-                        $stmt = $pdo->prepare("UPDATE dungeons SET dungeon_key=?,name=?,description=?,min_level=?,boss_key=?,respawn_hours=?,reward_json=?,is_active=? WHERE id=?");
-                        $stmt->execute(array_merge(array_values($f), [$f['id']]));
-                    } else {
-                        $stmt = $pdo->prepare("INSERT INTO dungeons (dungeon_key,name,description,min_level,boss_key,respawn_hours,reward_json,is_active) VALUES (?,?,?,?,?,?,?,?)");
-                        $stmt->execute(array_values($f));
-                    }
-                    $success = 'Данж сохранён';
-                }
-                elseif (isset($_POST['delete_dungeon'])) {
-                    $pdo->prepare("DELETE FROM dungeons WHERE id = ?")->execute([(int)$_POST['id']]);
-                    $success = 'Данж удалён';
-                    header('Location: ?action=dungeons'); exit;
-                }
-                // AJAX для нод
-                elseif (!empty($_POST['ajax_action'])) {
-                    header('Content-Type: application/json');
-                    try {
-                        if ($_POST['ajax_action'] === 'add_node') {
-                            $pdo->prepare("INSERT INTO dungeon_nodes (dungeon_id, pos_x, pos_y, tile_type) VALUES (?,?,?, 'corridor')")
-                                ->execute([(int)$_POST['dungeon_id'], (int)$_POST['x'], (int)$_POST['y']]);
-                            echo json_encode(['success' => true, 'id' => $pdo->lastInsertId()]);
-                        } elseif ($_POST['ajax_action'] === 'update_node') {
-                            $pdo->prepare("UPDATE dungeon_nodes SET tile_type=?, location_id=? WHERE id=?")
-                                ->execute([$_POST['tile_type'] ?? 'corridor', (int)($_POST['location_id'] ?? 0), (int)$_POST['node_id']]);
-                            echo json_encode(['success' => true]);
-                        } elseif ($_POST['ajax_action'] === 'delete_node') {
-                            $pdo->prepare("DELETE FROM dungeon_nodes WHERE id=? AND dungeon_id=?")
-                                ->execute([(int)$_POST['node_id'], (int)$_POST['dungeon_id']]);
-                            echo json_encode(['success' => true]);
-                        }
-                    } catch (Exception $e) { echo json_encode(['error' => $e->getMessage()]); }
-                    exit;
-                }
-                break;
-
-            // --- СТАНДАРТНЫЕ CRUD (Монстры, Оружие, Броня, Лут, Локации, Пользователи, Настройки) ---
-            case 'monsters': case 'weapons': case 'armors': case 'consumables': case 'loot':
-            case 'locations': case 'users': case 'settings':
-                // Для краткости код сохранён из твоего рабочего файла, 
-                // но проверен на отсутствие ошибок синтаксиса и инъекций.
-                // Логика обработки POST осталась идентичной твоей версии.
-                // ... (Здесь используется логика из твоего файла без изменений) ...
-                break;
-                
-            case 'map':
-                if (isset($_POST['set_location'])) {
-                    $pdo->prepare("UPDATE map_nodes SET location_id=? WHERE id=?")->execute([$_POST['location_id'] ? (int)$_POST['location_id'] : null, (int)$_POST['node_id']]);
-                    $success = 'Клетка карты обновлена';
-                }
-                break;
-                
-            case 'logout':
-                adminLogout();
-                break;
-        }
-    } catch (Exception $e) {
-        $error = 'Ошибка: ' . $e->getMessage();
-    }
+} catch (Exception $e) {
+    $error = 'Ошибка: ' . $e->getMessage();
 }
 
-// Логирование действий администратора (используем функцию из auth.php)
-function logAction($action, $table, $recordId) {
-    global $pdo, $adminId;
-    try {
-        logAdminAction($pdo, $adminId, $action, $table, $recordId);
-    } catch(Exception $e) {
-        error_log("Log action failed: " . $e->getMessage());
-    }
-}
-
-// ════════════ ЗАГРУЗКА ДАННЫХ ════════════
-$editData = null; $items = [];
-if ($id > 0 && in_array($action, ['monsters','weapons','armors','consumables','loot','locations','dungeons'])) {
-    $tbl = $action === 'dungeons' ? 'dungeons' : rtrim($action, 's');
-    $stmt = $pdo->prepare("SELECT * FROM $tbl WHERE id=?"); $stmt->execute([$id]); $editData = $stmt->fetch();
-}
+// Загрузка данных
+$stats = [
+    'players' => $pdo->query("SELECT COUNT(*) FROM players")->fetchColumn(),
+    'characters' => $pdo->query("SELECT COUNT(*) FROM characters")->fetchColumn(),
+    'monsters' => $pdo->query("SELECT COUNT(*) FROM monsters WHERE is_active=1")->fetchColumn(),
+    'weapons' => $pdo->query("SELECT COUNT(*) FROM weapons WHERE is_active=1")->fetchColumn(),
+    'armors' => $pdo->query("SELECT COUNT(*) FROM armors WHERE is_active=1")->fetchColumn(),
+    'consumables' => $pdo->query("SELECT COUNT(*) FROM consumables WHERE is_active=1")->fetchColumn(),
+    'locations' => $pdo->query("SELECT COUNT(*) FROM locations")->fetchColumn(),
+    'map_nodes' => $pdo->query("SELECT COUNT(*) FROM map_nodes")->fetchColumn(),
+    'logs' => $pdo->query("SELECT COUNT(*) FROM admin_logs")->fetchColumn(),
+];
 
 switch ($action) {
-    case 'monsters': $items = $pdo->query("SELECT * FROM monsters ORDER BY id DESC LIMIT 50")->fetchAll(); break;
-    case 'weapons': $items = $pdo->query("SELECT * FROM weapons ORDER BY id DESC LIMIT 50")->fetchAll(); break;
-    case 'armors': $items = $pdo->query("SELECT * FROM armors ORDER BY id DESC LIMIT 50")->fetchAll(); break;
-    case 'consumables': $items = $pdo->query("SELECT * FROM consumables ORDER BY id DESC LIMIT 50")->fetchAll(); break;
-    case 'loot': $items = $pdo->query("SELECT * FROM loot ORDER BY id DESC LIMIT 50")->fetchAll(); break;
-    case 'locations': $items = $pdo->query("SELECT id,location_key,name,tile_type,danger_level,is_active FROM locations ORDER BY name")->fetchAll(); break;
-    case 'users': $items = $pdo->query("SELECT id,username,role,is_active,created_at FROM players ORDER BY id DESC LIMIT 100")->fetchAll(); break;
-    case 'settings': $items = $pdo->query("SELECT * FROM game_settings ORDER BY category,setting_key")->fetchAll(); break;
-    case 'logs': $items = $pdo->query("SELECT l.*,p.username FROM admin_logs l LEFT JOIN players p ON l.admin_id=p.id ORDER BY l.created_at DESC LIMIT 100")->fetchAll(); break;
-    case 'dungeons':
-        $items = $pdo->query("SELECT * FROM dungeons ORDER BY min_level DESC, name")->fetchAll();
-        if ($id > 0 && $editData) {
-            $reward = json_decode($editData['reward_json'], true) ?: [];
-            $editData['base_caps'] = $reward['caps'] ?? 0;
-            $editData['loot_keys'] = implode(', ', $reward['items'] ?? []);
-            $dNodes = $pdo->query("SELECT * FROM dungeon_nodes WHERE dungeon_id=$id ORDER BY pos_y DESC, pos_x ASC")->fetchAll();
-            $dMinX = min(array_column($dNodes, 'pos_x')) ?? 0; $dMaxX = max(array_column($dNodes, 'pos_x')) ?? 0;
-            $dMinY = min(array_column($dNodes, 'pos_y')) ?? 0; $dMaxY = max(array_column($dNodes, 'pos_y')) ?? 0;
-            $locations = $pdo->query("SELECT id,name,tile_type FROM locations ORDER BY name")->fetchAll();
-        }
+    case 'users':
+        $items = $pdo->query("
+            SELECT p.id, p.username, p.is_active, p.created_at, r.role_name,
+                   c.name as character_name, c.level
+            FROM players p
+            LEFT JOIN roles r ON r.id = p.role_id
+            LEFT JOIN characters c ON c.player_id = p.id
+            ORDER BY p.id DESC LIMIT 100
+        ")->fetchAll();
         break;
-    // Карта (ИСПРАВЛЕНО: защита от null и приведение типов)
+        
+    case 'settings':
+        $items = $pdo->query("SELECT * FROM game_settings ORDER BY category, setting_key")->fetchAll();
+        break;
+        
+    case 'logs':
+        $items = $pdo->query("
+            SELECT l.*, p.username 
+            FROM admin_logs l
+            LEFT JOIN players p ON p.id = l.admin_id
+            ORDER BY l.created_at DESC LIMIT 100
+        ")->fetchAll();
+        break;
+        
+    case 'locations':
+        $items = $pdo->query("
+            SELECT l.*, lt.type_name as tile_type
+            FROM locations l
+            LEFT JOIN location_types lt ON lt.id = l.location_type_id
+            ORDER BY l.name LIMIT 100
+        ")->fetchAll();
+        break;
+        
+    case 'monsters':
+        $items = $pdo->query("SELECT * FROM monsters ORDER BY id DESC LIMIT 50")->fetchAll();
+        break;
+        
+    case 'weapons':
+        $items = $pdo->query("SELECT * FROM weapons ORDER BY id DESC LIMIT 50")->fetchAll();
+        break;
+        
+    case 'armors':
+        $items = $pdo->query("SELECT * FROM armors ORDER BY id DESC LIMIT 50")->fetchAll();
+        break;
+        
+    case 'consumables':
+        $items = $pdo->query("SELECT * FROM consumables ORDER BY id DESC LIMIT 50")->fetchAll();
+        break;
+        
+        case 'dungeons':
+        $items = $pdo->query("SELECT * FROM dungeons ORDER BY id DESC LIMIT 50")->fetchAll();
+        break;
+        
+    case 'quotes':
+        if (isset($_POST['add_quote'])) {
+            $stmt = $pdo->prepare("
+                INSERT INTO location_quotes (quote_text, tile_type, mood, source, is_active)
+                VALUES (?, ?, ?, ?, ?)
+            ");
+            $stmt->execute([
+                $_POST['quote_text'],
+                $_POST['tile_type'],
+                $_POST['mood'] ?: 'neutral',
+                $_POST['source'] ?: null,
+                isset($_POST['is_active']) ? 1 : 0
+            ]);
+            $success = 'Фраза добавлена';
+        }
+        if (isset($_POST['update_quote'])) {
+            $stmt = $pdo->prepare("
+                UPDATE location_quotes 
+                SET quote_text = ?, tile_type = ?, mood = ?, source = ?, is_active = ?
+                WHERE id = ?
+            ");
+            $stmt->execute([
+                $_POST['quote_text'],
+                $_POST['tile_type'],
+                $_POST['mood'] ?: 'neutral',
+                $_POST['source'] ?: null,
+                isset($_POST['is_active']) ? 1 : 0,
+                (int)$_POST['id']
+            ]);
+            $success = 'Фраза обновлена';
+        }
+        if (isset($_POST['delete_quote'])) {
+            $stmt = $pdo->prepare("DELETE FROM location_quotes WHERE id = ?");
+            $stmt->execute([(int)$_POST['id']]);
+            $success = 'Фраза удалена';
+        }
+        $items = $pdo->query("SELECT * FROM location_quotes ORDER BY tile_type, id LIMIT 200")->fetchAll();
+        $tileTypes = $pdo->query("SELECT type_name FROM location_types ORDER BY type_name")->fetchAll(PDO::FETCH_COLUMN);
+        break;
+        
+    case 'generate_map':
+        $output = [];
+        $cmd = 'php ' . __DIR__ . '/../scripts/generate_world_map.php';
+        exec($cmd, $output, $return);
+        if ($return === 0) {
+            $success = '✅ Карта успешно сгенерирована!';
+        } else {
+            $error = 'Ошибка генерации карты: ' . implode("\n", $output);
+        }
+        header('Location: ?action=map');
+        exit;
+        
     case 'map':
-        // Обработка сохранения параметров клетки
-        if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['node_id'])) {
-            $nodeId = (int)$_POST['node_id'];
-            if ($nodeId > 0) {
-                $locId = $_POST['location_id'] ? (int)$_POST['location_id'] : null;
-                $danger = max(1, min(10, (int)($_POST['danger_level'] ?? 1)));
-                $rad = max(0, min(100, (int)($_POST['radiation_level'] ?? 0)));
-                $pdo->prepare("UPDATE map_nodes SET location_id=?, danger_level=?, radiation_level=? WHERE id=?")
-                    ->execute([$locId, $danger, $rad, $nodeId]);
-                $success = 'Параметры клетки обновлены';
-                // Перезагружаем страницу, чтобы отобразить изменения
-                header('Location: ?action=map'); exit;
-            }
+        if (isset($_POST['update_cell'])) {
+            $stmt = $pdo->prepare("
+                UPDATE map_nodes 
+                SET location_type_id = ?, location_id = ?
+                WHERE pos_x = ? AND pos_y = ?
+            ");
+            $stmt->execute([
+                $_POST['location_type_id'] ?: null,
+                $_POST['location_id'] ?: null,
+                (int)$_POST['pos_x'],
+                (int)$_POST['pos_y']
+            ]);
+            $success = 'Клетка обновлена';
         }
         
-        // Запрос теперь включает danger_level и radiation_level
-        $nodes = $pdo->query("SELECT mn.id, mn.pos_x, mn.pos_y, mn.location_id, mn.danger_level, mn.radiation_level, l.name as loc_name, l.tile_type FROM map_nodes mn LEFT JOIN locations l ON mn.location_id = l.id")->fetchAll();
+        $nodes = $pdo->query("
+            SELECT mn.pos_x, mn.pos_y, mn.is_border, mn.border_direction,
+                   l.id as location_db_id, l.name as location_name,
+                   lt.type_name as tile_type, lt.id as type_db_id
+            FROM map_nodes mn
+            LEFT JOIN locations l ON l.id = mn.location_id
+            LEFT JOIN location_types lt ON lt.id = mn.location_type_id
+            ORDER BY mn.pos_y DESC, mn.pos_x ASC
+        ")->fetchAll();
         
-        if (empty($nodes)) {
-            $error = 'Карта пуста. Запустите генератор!';
-            $minX = 0; $maxX = 0; $minY = 0; $maxY = 0;
-        } else {
-            $xs = array_map('intval', array_column($nodes, 'pos_x'));
-            $ys = array_map('intval', array_column($nodes, 'pos_y'));
+        $allTypes = $pdo->query("SELECT id, type_name FROM location_types ORDER BY type_name")->fetchAll();
+        $allLocations = $pdo->query("SELECT id, name, location_key FROM locations ORDER BY name")->fetchAll();
+        
+        $typeColors = [
+            'wasteland' => '#4a4a3a',
+            'city' => '#5a5a5a',
+            'dungeon' => '#3a3a5a',
+            'radzone' => '#4a6a4a',
+            'vault' => '#4a3a3a',
+            'vault_ext' => '#5a4a4a',
+            'mountain' => '#6a6a7a',
+            'forest' => '#3a5a3a',
+            'desert' => '#7a6a4a',
+            'ruins' => '#5a4a3a',
+            'camp' => '#5a5a3a',
+            'military' => '#3a4a3a',
+            'military_base' => '#2a3a2a',
+            'border' => '#e94560',
+            'empty' => '#2a2a3a'
+        ];
+        
+        if (!empty($nodes)) {
+            $xs = array_column($nodes, 'pos_x');
+            $ys = array_column($nodes, 'pos_y');
             $minX = min($xs); $maxX = max($xs);
             $minY = min($ys); $maxY = max($ys);
-            $locations = $pdo->query("SELECT id, name, tile_type FROM locations ORDER BY name")->fetchAll();
             $grid = [];
             foreach ($nodes as $n) { $grid[$n['pos_y']][$n['pos_x']] = $n; }
         }
         break;
 }
-
-$stats = [];
-if ($action === 'dashboard') {
-    $stats['players'] = $pdo->query("SELECT COUNT(*) FROM players")->fetchColumn();
-    $stats['monsters'] = $pdo->query("SELECT COUNT(*) FROM monsters WHERE is_active=1")->fetchColumn();
-    $stats['weapons'] = $pdo->query("SELECT COUNT(*) FROM weapons WHERE is_active=1")->fetchColumn();
-    $stats['armors'] = $pdo->query("SELECT COUNT(*) FROM armors WHERE is_active=1")->fetchColumn();
-    $stats['consumables'] = $pdo->query("SELECT COUNT(*) FROM consumables WHERE is_active=1")->fetchColumn();
-    $stats['loot'] = $pdo->query("SELECT COUNT(*) FROM loot WHERE is_active=1")->fetchColumn();
-    $stats['locations'] = $pdo->query("SELECT COUNT(*) FROM locations")->fetchColumn();
-    $stats['logs'] = $pdo->query("SELECT COUNT(*) FROM admin_logs")->fetchColumn();
-    $mapData = $pdo->query("SELECT COUNT(*) as cnt, MIN(pos_x) as minX, MAX(pos_x) as maxX, MIN(pos_y) as minY, MAX(pos_y) as maxY FROM map_nodes")->fetch();
-    $stats['map_nodes'] = $mapData['cnt'] ?? 0;
-    $stats['map_width'] = $mapData['cnt'] ? ($mapData['maxX'] - $mapData['minX'] + 1) : 0;
-    $stats['map_height'] = $mapData['cnt'] ? ($mapData['maxY'] - $mapData['minY'] + 1) : 0;
-}
 ?>
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-    <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Админ-панель | Fallout: Пустоши</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Админ-панель | Fallout RPG</title>
     <style>
-        :root { 
-            --bg: #f2f2f7; --card: #fff; --blue: #007aff; --green: #34c759; --red: #ff3b30; --orange: #ff9500; 
-            --text: #1c1c1e; --gray: #8e8e93; --border: #e5e5ea; --input: #f2f2f7; --side: 260px; 
-        }
-        * { box-sizing:border-box; margin:0; padding:0; }
-        body { font-family:-apple-system, sans-serif; background:var(--bg); color:var(--text); display:flex; min-height:100vh; }
-        .sidebar { width:var(--side); background:var(--card); border-right:1px solid var(--border); display:flex; flex-direction:column; position:fixed; height:100vh; z-index: 100; }
-        .sidebar-header { padding:20px; border-bottom:1px solid var(--border); }
-        .sidebar-header h2 { font-size:20px; font-weight:700; display:flex; align-items:center; gap:10px; }
-        .nav-section { padding:15px 0; }
-        .nav-label { padding:0 20px 5px; font-size:11px; font-weight:600; color:var(--gray); text-transform:uppercase; }
-        .nav-item { display:flex; align-items:center; padding:10px 20px; color:var(--text); text-decoration:none; font-size:14px; font-weight:500; gap:10px; }
-        .nav-item:hover { background:var(--input); }
-        .nav-item.active { background:var(--blue); color:#fff; font-weight:600; }
-        .nav-item .icon { width:20px; text-align:center; }
-        .nav-item .badge { margin-left:auto; background:var(--gray); color:#fff; font-size:10px; padding:2px 6px; border-radius:10px; }
-        .main { flex:1; margin-left:var(--side); padding:30px; }
-        .page-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; }
-        .page-header h1 { font-size:26px; font-weight:700; }
-        .page-header .subtitle { color:var(--gray); font-size:14px; margin-top:4px; }
-        .card { background:var(--card); border-radius:12px; padding:20px; box-shadow:0 2px 8px rgba(0,0,0,0.05); margin-bottom:20px; }
-        .stats-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(160px, 1fr)); gap:15px; margin-bottom:20px; }
-        .stat-card { background:var(--card); border-radius:12px; padding:15px; text-align:center; box-shadow:0 2px 8px rgba(0,0,0,0.05); }
-        .stat-card .value { font-size:28px; font-weight:700; }
-        .stat-card.blue .value { color:var(--blue); } .stat-card.green .value { color:var(--green); } .stat-card.red .value { color:var(--red); }
-        .table-wrap { overflow-x:auto; } table { width:100%; border-collapse:collapse; }
-        th { text-align:left; padding:10px; font-size:11px; font-weight:600; color:var(--gray); text-transform:uppercase; border-bottom:1px solid var(--border); }
-        td { padding:10px; border-bottom:1px solid #f5f5f5; font-size:13px; } tr:hover td { background:var(--input); }
-        .actions { display:flex; gap:6px; }
-        .btn { padding:8px 12px; font-size:12px; font-weight:600; border:none; border-radius:6px; cursor:pointer; color:#fff; transition:opacity 0.2s; }
-        .btn:hover { opacity:0.9; } .btn-blue{background:var(--blue);} .btn-green{background:var(--green);} .btn-red{background:var(--red);} .btn-ghost{background:var(--input); color:var(--text);}
-        .form-group { margin-bottom:12px; } 
-        label.form-label { display:block; font-size:12px; font-weight:600; color:var(--gray); margin-bottom:4px; }
-        input.form-input, select.form-select, textarea.form-textarea { width:100%; padding:8px 10px; font-size:13px; border:1px solid var(--border); border-radius:6px; background:var(--input); }
-        input:focus, select:focus { outline:none; border-color:var(--blue); }
-        .form-row { display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:10px; }
-        .alert { padding:12px; border-radius:8px; margin-bottom:15px; font-size:13px; }
-        .alert-ok { background:#d1e7dd; color:#0f5132; border:1px solid #badbcc; }
-        .alert-err { background:#f8d7da; color:#842029; border:1px solid #f5c2c7; }
+        :root { --bg: #1a1a2e; --card: #16213e; --blue: #0f3460; --accent: #e94560; --green: #00d9ff; --text: #eee; --gray: #888; --border: #333; }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { font-family: 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; display: flex; }
         
-/* КАРТА */
-.map-container {
-    width: 100%; 
-    height: calc(100vh - 220px); 
-    overflow: hidden; 
-    position: relative; 
-    background: #e5e5e5; 
-    border-radius: 12px; 
-    border: 1px solid var(--ios-border);
-}
-.map-grid {
-    position: absolute;
-    left: 50%;
-    top: 50%;
-    transform: translate(-50%, -50%);
-    display: grid;       /* <-- ЭТОГО НЕ ХВАТАЛО */
-    gap: 0px;            /* Убираем лишние отступы */
-    width: fit-content;  /* Контейнер подстраивается под содержимое */
-}
-.map-cell {
-    width: 14px;  /* Синхронизировано с HTML */
-    height: 14px; 
-    border: 1px solid rgba(0,0,0,0.1); 
-    cursor: pointer; 
-    padding: 0; 
-    display: flex; 
-    align-items: center; 
-    justify-content: center; 
-    font-size: 10px;
-}
-.map-cell:hover { 
-    transform: scale(1.5); 
-    z-index: 10; 
-    border: 1px solid #fff; 
-    box-shadow: 0 0 4px rgba(0,0,0,0.3); 
-}
-.cell-wasteland{background:#f5f5dc;} .cell-city,.cell-ruins,.cell-military,.cell-camp,.cell-dungeon{background:#a9a9a9;} .cell-radzone{background:#90ee90;} .cell-forest,.cell-mountain{background:#add8e6;} .cell-desert{background:#fffacd;} .cell-vault{background:#ffcccb;} .cell-empty{background:#e0e0e0;}
-        /* ДАНЖИ */
-        .d-editor { display:flex; gap:15px; height:calc(100vh - 200px); }
-        .d-grid-wrap { flex:1; background:#f9f9f9; border-radius:8px; border:1px solid var(--border); position:relative; overflow:hidden; }
-        .d-grid { position:absolute; left:50%; top:50%; transform:translate(-50%, -50%); }
-        .d-cell { width:28px; height:28px; border:1px solid #ccc; cursor:pointer; display:flex; align-items:center; justify-content:center; font-size:11px; transition:all 0.1s; }
-        .d-cell:hover { transform:scale(1.1); z-index:10; box-shadow:0 0 4px rgba(0,0,0,0.2); }
-        .d-cell.selected { outline:2px solid var(--blue); z-index:20; }
-        .d-entrance{background:#4a90e2;color:#fff;} .d-corridor{background:#bdc3c7;} .d-room{background:#95a5a6;} .d-boss{background:#e74c3c;color:#fff;} .d-treasure{background:#f1c40f;} .d-exit{background:#2ecc71;color:#fff;} .d-trap{background:#e67e22;color:#fff;} .d-empty{background:#ecf0f1;border:1px dashed #ccc;}
-        .d-panel { width:280px; background:#fff; border-radius:8px; border:1px solid var(--border); padding:15px; overflow-y:auto; }
-
-        @media(max-width:900px){.sidebar{width:60px;}.sidebar-header h2,.nav-label,.nav-item span,.badge{display:none;}.nav-item{justify-content:center;padding:15px 0;}.main{margin-left:60px;padding:15px;}}
+        .sidebar { width: 260px; background: var(--card); border-right: 1px solid var(--border); min-height: 100vh; position: fixed; }
+        .sidebar-header { padding: 20px; border-bottom: 1px solid var(--border); }
+        .sidebar-header h2 { font-size: 18px; color: var(--accent); }
+        .nav-section { padding: 15px 0; }
+        .nav-label { padding: 5px 20px; font-size: 11px; color: var(--gray); text-transform: uppercase; }
+        .nav-item { display: flex; align-items: center; padding: 12px 20px; color: var(--text); text-decoration: none; font-size: 14px; transition: 0.2s; }
+        .nav-item:hover { background: var(--blue); }
+        .nav-item.active { background: var(--accent); color: #fff; }
+        .nav-item.danger { color: var(--accent); }
+        .nav-item .icon { width: 24px; margin-right: 10px; }
+        
+        .main { flex: 1; margin-left: 260px; padding: 30px; }
+        .page-header { margin-bottom: 25px; }
+        .page-header h1 { font-size: 28px; margin-bottom: 5px; }
+        .page-header .subtitle { color: var(--gray); }
+        
+        .card { background: var(--card); border-radius: 12px; padding: 20px; margin-bottom: 20px; border: 1px solid var(--border); }
+        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 15px; margin-bottom: 20px; }
+        .stat-card { background: var(--card); border-radius: 10px; padding: 15px; text-align: center; border: 1px solid var(--border); }
+        .stat-card .label { font-size: 12px; color: var(--gray); margin-bottom: 5px; }
+        .stat-card .value { font-size: 24px; font-weight: bold; color: var(--green); }
+        
+        table { width: 100%; border-collapse: collapse; }
+        th { text-align: left; padding: 12px; font-size: 11px; color: var(--gray); text-transform: uppercase; border-bottom: 1px solid var(--border); }
+        td { padding: 12px; border-bottom: 1px solid var(--border); font-size: 13px; }
+        tr:hover td { background: var(--blue); }
+        
+        .btn { padding: 8px 14px; font-size: 12px; border: none; border-radius: 6px; cursor: pointer; text-decoration: none; display: inline-block; }
+        .btn-blue { background: var(--blue); color: var(--green); }
+        .btn-red { background: var(--accent); color: #fff; }
+        .btn-ghost { background: transparent; border: 1px solid var(--border); color: var(--text); }
+        
+        .form-group { margin-bottom: 15px; }
+        label { display: block; font-size: 12px; color: var(--gray); margin-bottom: 5px; }
+        input, select, textarea { width: 100%; padding: 10px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-size: 14px; }
+        input:focus, select:focus { outline: none; border-color: var(--green); }
+        
+        .alert { padding: 12px 16px; border-radius: 8px; margin-bottom: 20px; font-size: 14px; }
+        .alert-success { background: rgba(0,217,255,0.1); border: 1px solid var(--green); color: var(--green); }
+        .alert-error { background: rgba(233,69,96,0.1); border: 1px solid var(--accent); color: var(--accent); }
+        
+        .badge { padding: 3px 8px; border-radius: 4px; font-size: 11px; }
+        .badge-active { background: rgba(0,217,255,0.2); color: var(--green); }
+        .badge-inactive { background: rgba(233,69,96,0.2); color: var(--accent); }
+        
+        .map-container { background: var(--bg); border-radius: 8px; padding: 15px; overflow-x: auto; }
+        .map-grid { display: grid; gap: 2px; width: fit-content; }
+        .map-cell { width: 24px; height: 24px; border: 1px solid var(--border); border-radius: 2px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 10px; transition: 0.1s; }
+        .map-cell:hover { transform: scale(1.2); z-index: 10; border-color: var(--green); }
+        .cell-wasteland { background: #4a4a3a; }
+        .cell-city { background: #5a5a5a; }
+        .cell-dungeon { background: #3a3a5a; }
+        .cell-vault { background: #4a3a3a; }
+        .cell-vault_ext { background: #5a4a4a; }
+        .cell-military { background: #3a4a3a; }
+        .cell-military_base { background: #2a3a2a; }
+        .cell-ruins { background: #5a4a3a; }
+        .cell-radzone { background: #4a6a4a; }
+        .cell-forest { background: #3a5a3a; }
+        .cell-mountain { background: #6a6a7a; }
+        .cell-desert { background: #7a6a4a; }
+        .cell-camp { background: #5a5a3a; }
+        .cell-empty { background: #2a2a3a; }
+        .cell-border { background: var(--accent); }
     </style>
 </head>
 <body>
-<nav class="sidebar">
-    <div class="sidebar-header"><h2>☢️ Admin</h2></div>
-    <div class="nav-section"><div class="nav-label">Главная</div><a href="?action=dashboard" class="nav-item <?= $action=='dashboard'?'active':'' ?>"><span class="icon">📊</span> <span>Дашборд</span></a></div>
-    <div class="nav-section"><div class="nav-label">Контент</div>
-        <a href="?action=monsters" class="nav-item <?= $action=='monsters'?'active':'' ?>"><span class="icon">👹</span> <span>Монстры</span><span class="badge"><?= $stats['monsters']??0 ?></span></a>
-        <a href="?action=weapons" class="nav-item <?= $action=='weapons'?'active':'' ?>"><span class="icon">🔫</span> <span>Оружие</span></a>
-        <a href="?action=armors" class="nav-item <?= $action=='armors'?'active':'' ?>"><span class="icon">🛡️</span> <span>Броня</span></a>
-        <a href="?action=consumables" class="nav-item <?= $action=='consumables'?'active':'' ?>"><span class="icon">💊</span> <span>Расходники</span></a>
-        <a href="?action=loot" class="nav-item <?= $action=='loot'?'active':'' ?>"><span class="icon">📦</span> <span>Лут</span></a>
-        <a href="?action=locations" class="nav-item <?= $action=='locations'?'active':'' ?>"><span class="icon">🗺️</span> <span>Локации</span></a>
-        <a href="?action=dungeons" class="nav-item <?= $action=='dungeons'?'active':'' ?>"><span class="icon">⚔️</span> <span>Данжи</span></a>
-    </div>
-    <div class="nav-section"><div class="nav-label">Система</div>
-        <a href="?action=map" class="nav-item <?= $action=='map'?'active':'' ?>"><span class="icon">🌍</span> <span>Карта</span></a>
-        <a href="?action=users" class="nav-item <?= $action=='users'?'active':'' ?>"><span class="icon">👥</span> <span>Игроки</span></a>
-        <a href="?action=settings" class="nav-item <?= $action=='settings'?'active':'' ?>"><span class="icon">⚙️</span> <span>Настройки</span></a>
-        <a href="?action=logs" class="nav-item <?= $action=='logs'?'active':'' ?>"><span class="icon">📜</span> <span>Логи</span></a>
-        <a href="?action=logout" class="nav-item" style="color:var(--red);"><span class="icon">🚪</span> <span>Выход</span></a>
-    </div>
-</nav>
-
-<main class="main">
-    <?php if($error): ?><div class="alert alert-err">❌ <?= htmlspecialchars($error) ?></div><?php endif; ?>
-    <?php if($success): ?><div class="alert alert-ok">✅ <?= htmlspecialchars($success) ?></div><?php endif; ?>
-
-    <?php if ($action === 'dashboard'): ?>
-        <div class="page-header"><div><h1>Панель управления</h1><div class="subtitle">Сводка по миру</div></div></div>
-        <div class="stats-grid">
-            <div class="stat-card blue"><div>👥 Игроки</div><div class="value"><?= $stats['players'] ?></div></div>
-            <div class="stat-card green"><div>👹 Монстры</div><div class="value"><?= $stats['monsters'] ?></div></div>
-            <div class="stat-card"><div>🗺️ Клетки</div><div class="value"><?= number_format($stats['map_nodes']) ?></div></div>
-            <div class="stat-card"><div>📐 Размер</div><div class="value"><?= $stats['map_width'] ?>×<?= $stats['map_height'] ?></div></div>
+    <nav class="sidebar">
+        <div class="sidebar-header">
+            <h2>☢️ Fallout Admin</h2>
         </div>
-
-<!-- КАРТА МИРА -->
-<?php elseif ($action === 'map'): ?>
-    <div class="page-header"><div><h1>🌍 Карта мира</h1><div class="subtitle">Визуализация сетки. Кликни на клетку, чтобы назначить локацию.</div></div></div>
-    <div class="card">
-        <form method="POST" style="display:flex; flex-direction:column; gap:10px; margin-bottom:15px;">
-            <input type="hidden" name="node_id" id="node-id-input" value="">
-            <div class="form-group" style="margin:0">
-                <label class="form-label">Выбранная клетка</label>
-                <input class="form-input" id="selected-node" readonly value="Кликни на карту">
+        <div class="nav-section">
+            <div class="nav-label">Главная</div>
+            <a href="?action=dashboard" class="nav-item <?= $action=='dashboard'?'active':'' ?>"><span class="icon">📊</span> Дашборд</a>
+        </div>
+        <div class="nav-section">
+            <div class="nav-label">Контент</div>
+            <a href="?action=locations" class="nav-item <?= $action=='locations'?'active':'' ?>"><span class="icon">🗺️</span> Локации</a>
+            <a href="?action=monsters" class="nav-item <?= $action=='monsters'?'active':'' ?>"><span class="icon">👹</span> Монстры</a>
+            <a href="?action=weapons" class="nav-item <?= $action=='weapons'?'active':'' ?>"><span class="icon">🔫</span> Оружие</a>
+            <a href="?action=armors" class="nav-item <?= $action=='armors'?'active':'' ?>"><span class="icon">🛡️</span> Броня</a>
+            <a href="?action=consumables" class="nav-item <?= $action=='consumables'?'active':'' ?>"><span class="icon">💊</span> Расходники</a>
+            <a href="?action=dungeons" class="nav-item <?= $action=='dungeons'?'active':'' ?>"><span class="icon">⚔️</span> Данжи</a>
+            <a href="?action=quotes" class="nav-item <?= $action=='quotes'?'active':'' ?>"><span class="icon">💬</span> Фразы</a>
+        </div>
+        <div class="nav-section">
+            <div class="nav-label">Система</div>
+            <a href="?action=map" class="nav-item <?= $action=='map'?'active':'' ?>"><span class="icon">🌍</span> Карта мира</a>
+            <a href="?action=users" class="nav-item <?= $action=='users'?'active':'' ?>"><span class="icon">👥</span> Игроки</a>
+            <a href="?action=settings" class="nav-item <?= $action=='settings'?'active':'' ?>"><span class="icon">⚙️</span> Настройки</a>
+            <a href="?action=logs" class="nav-item <?= $action=='logs'?'active':'' ?>"><span class="icon">📜</span> Логи</a>
+        </div>
+        <div class="nav-section">
+            <a href="?action=logout" class="nav-item danger"><span class="icon">🚪</span> Выход</a>
+        </div>
+    </nav>
+    
+    <main class="main">
+        <?php if ($error): ?>
+            <div class="alert alert-error"><?= htmlspecialchars($error) ?></div>
+        <?php endif; ?>
+        <?php if ($success): ?>
+            <div class="alert alert-success"><?= htmlspecialchars($success) ?></div>
+        <?php endif; ?>
+        
+        <?php switch ($action):
+        case 'dashboard': ?>
+            <div class="page-header">
+                <h1>📊 Дашборд</h1>
+                <div class="subtitle">Статистика мира Fallout</div>
             </div>
-            <div class="form-row" style="margin:0">
-                <div class="form-group" style="margin:0"><label class="form-label">Локация</label>
-                    <select class="form-select" name="location_id" id="loc-select">
-                        <option value="">— Пустошь (Очистить) —</option>
-                        <?php foreach($locations as $l): ?><option value="<?= $l['id'] ?>"><?= htmlspecialchars($l['name']) ?> (<?= $l['tile_type'] ?>)</option><?php endforeach; ?>
-                    </select>
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="label">👥 Игроки</div>
+                    <div class="value"><?= $stats['players'] ?></div>
+                </div>
+                <div class="stat-card">
+                    <div class="label">👹 Монстры</div>
+                    <div class="value"><?= $stats['monsters'] ?></div>
+                </div>
+                <div class="stat-card">
+                    <div class="label">🗺️ Локации</div>
+                    <div class="value"><?= $stats['locations'] ?></div>
+                </div>
+                <div class="stat-card">
+                    <div class="label">🌍 Клетки карты</div>
+                    <div class="value"><?= $stats['map_nodes'] ?></div>
+                </div>
+                <div class="stat-card">
+                    <div class="label">📜 Логи</div>
+                    <div class="value"><?= $stats['logs'] ?></div>
                 </div>
             </div>
-            <div class="form-row" style="margin:0">
-                <div class="form-group" style="margin:0"><label class="form-label">Уровень опасности (1-10)</label><input class="form-input" type="number" id="edit-danger" name="danger_level" min="1" max="10" disabled></div>
-                <div class="form-group" style="margin:0"><label class="form-label">Радиация (0-100)</label><input class="form-input" type="number" id="edit-radiation" name="radiation_level" min="0" max="100" disabled></div>
+            <div class="card">
+                <h3 style="margin-bottom: 15px;">Предметы</h3>
+                <div class="stats-grid" style="grid-template-columns: repeat(4, 1fr);">
+                    <div class="stat-card"><div class="label">🔫 Оружие</div><div class="value"><?= $stats['weapons'] ?></div></div>
+                    <div class="stat-card"><div class="label">🛡️ Броня</div><div class="value"><?= $stats['armors'] ?></div></div>
+                    <div class="stat-card"><div class="label">💊 Расходники</div><div class="value"><?= $stats['consumables'] ?></div></div>
+                    <div class="stat-card"><div class="label">👻 Персонажи</div><div class="value"><?= $stats['characters'] ?></div></div>
+                </div>
             </div>
-            <button type="submit" class="btn btn-orange" id="btn-update-node" disabled style="height:40px; margin-top:5px;">💾 Сохранить параметры клетки</button>
-        </form>
+        <?php break; ?>
         
-        <!-- ИСПРАВЛЕНИЕ: Добавлен класс map-container -->
-<div class="map-container" id="mapContainer">
-    <?php $cols = (isset($maxX) && isset($minX)) ? max(1, $maxX - $minX + 1) : 10; ?>
-    <div style="font-size:10px; color:#666; margin-bottom:5px; padding-left:5px;">
-        Сетка: <?= $cols ?>×<?= max(1, $maxY - $minY + 1) ?> | X: <?= $minX ?>..<?= $maxX ?>
-    </div>
-    <div class="map-grid" id="mapGrid" style="grid-template-columns: repeat(<?= $cols ?>, 14px);">
-        <?php if (isset($grid)): ?>
-            <?php for ($y = $maxY; $y >= $minY; $y--): for ($x = $minX; $x <= $maxX; $x++):
-                $node = $grid[$y][$x] ?? null;
-                $bgClass = 'cell-empty'; $nid = '';
-                $danger = $node['danger_level'] ?? 1;
-                $rad = $node['radiation_level'] ?? 0;
-                $locName = $node['loc_name'] ?: 'Пустошь';
-                
-                if ($node) {
-                    $nid = $node['id'];
-                    $bgClass = "cell-{$node['tile_type']}";
-                }
-                // Формируем подсказку с уровнем нода
-                $title = "ID:{$nid} | {$locName} ($x,$y) | ⚠️ Опасность: $danger | ☢️ Рад: $rad";
-            ?>
-            <button class="map-cell <?= $bgClass ?>" title="<?= htmlspecialchars($title) ?>" onclick="selectMapNode(<?= $nid ?>, '<?= htmlspecialchars($title) ?>', <?= $danger ?>, <?= $rad ?>)"><?= ($x==0&&$y==0)?'🎯':'' ?></button>
-            <?php endfor; endfor; ?>
-        <?php endif; ?>
-    </div>
-</div>
-    </div>
-
-    <?php elseif ($action === 'dungeons'): ?>
-        <div class="page-header"><div><h1>⚔️ Данжи</h1><div class="subtitle"><?= ($id>0 && $editData) ? 'Ред: '.$editData['name'] : 'Генератор и список' ?></div></div></div>
-        <?php if ($id === 0): ?>
-            <div class="card" style="border:2px solid var(--blue);">
-                <h3 style="margin-bottom:10px;">🛠️ Генератор</h3>
-                <form method="POST" style="display:flex; gap:10px; align-items:flex-end; flex-wrap:wrap;">
-                    <input type="hidden" name="generate_dungeons" value="1">
-                    <div><label class="form-label">Кол-во</label><input type="number" name="count" value="3" class="form-input" style="width:70px"></div>
-                    <div><label class="form-label">Ур. Мин</label><input type="number" name="min_lvl" value="1" class="form-input" style="width:70px"></div>
-                    <div><label class="form-label">Ур. Макс</label><input type="number" name="max_lvl" value="5" class="form-input" style="width:70px"></div>
-                    <div><label class="form-label">Размер Мин</label><input type="number" name="min_size" value="2" class="form-input" style="width:70px"></div>
-                    <div><label class="form-label">Размер Макс</label><input type="number" name="max_size" value="4" class="form-input" style="width:70px"></div>
-                    <button class="btn btn-green" style="margin-top:16px;">⚔️ Сгенерировать</button>
+        <?php case 'users': ?>
+            <div class="page-header">
+                <h1>👥 Игроки</h1>
+                <div class="subtitle">Управление аккаунтами</div>
+            </div>
+            <div class="card">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Имя</th>
+                            <th>Персонаж</th>
+                            <th>Ур.</th>
+                            <th>Роль</th>
+                            <th>Статус</th>
+                            <th>Создан</th>
+                            <th>Действия</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ($items as $u): ?>
+                            <tr>
+                                <td><?= $u['id'] ?></td>
+                                <td><?= htmlspecialchars($u['username']) ?></td>
+                                <td><?= htmlspecialchars($u['character_name'] ?? '—') ?></td>
+                                <td><?= $u['level'] ?? '—' ?></td>
+                                <td><?= htmlspecialchars($u['role_name'] ?? 'player') ?></td>
+                                <td>
+                                    <span class="badge <?= $u['is_active'] ? 'badge-active' : 'badge-inactive' ?>">
+                                        <?= $u['is_active'] ? 'Активен' : 'Заблокирован' ?>
+                                    </span>
+                                </td>
+                                <td><?= date('d.m.Y', strtotime($u['created_at'])) ?></td>
+                                <td>
+                                    <form method="POST" style="display:inline;">
+                                        <?= csrfField() ?>
+                                        <input type="hidden" name="toggle_active" value="1">
+                                        <button type="submit" class="btn btn-ghost"><?= $u['is_active'] ? '🔒' : '🔓' ?></button>
+                                    </form>
+                                </td>
+                            </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+        <?php break; ?>
+        
+        <?php case 'locations': ?>
+            <div class="page-header">
+                <h1>🗺️ Локации</h1>
+                <div class="subtitle">Справочник типов местности</div>
+            </div>
+            <div class="card">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Ключ</th>
+                            <th>Название</th>
+                            <th>Тип</th>
+                            <th>Опасность</th>
+                            <th>Радиация</th>
+                            <th>Убежище</th>
+                            <th>Данж</th>
+                            <th>Активен</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ($items as $l): ?>
+                            <tr>
+                                <td><?= $l['id'] ?></td>
+                                <td><code><?= htmlspecialchars($l['location_key']) ?></code></td>
+                                <td><?= htmlspecialchars($l['name']) ?></td>
+                                <td><?= htmlspecialchars($l['tile_type'] ?? '—') ?></td>
+                                <td><?= $l['danger_level'] ?></td>
+                                <td><?= $l['radiation_level'] ?></td>
+                                <td><?= $l['is_vault'] ? '✓' : '—' ?></td>
+                                <td><?= $l['is_dungeon'] ? '✓' : '—' ?></td>
+                                <td><?= $l['is_active'] ? '✓' : '—' ?></td>
+                            </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+        <?php break; ?>
+        
+        <?php case 'quotes': ?>
+            <div class="page-header">
+                <h1>💬 Фразы локаций</h1>
+                <div class="subtitle">Атмосферные фразы для каждого типа местности</div>
+            </div>
+            
+            <div class="card" style="margin-bottom: 20px;">
+                <h3 style="margin-bottom: 15px;">➕ Добавить фразу</h3>
+                <form method="POST">
+                    <?= csrfField() ?>
+                    <input type="hidden" name="add_quote" value="1">
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 15px;">
+                        <div class="form-group">
+                            <label>Тип локации</label>
+                            <select name="tile_type" required>
+                                <option value="wasteland">Пустошь</option>
+                                <option value="city">Город</option>
+                                <option value="dungeon">Подземелье</option>
+                                <option value="radzone">Радиоактивная зона</option>
+                                <option value="vault">Убежище</option>
+                                <option value="vault_ext">Вход в Убежище</option>
+                                <option value="mountain">Горы</option>
+                                <option value="forest">Лес</option>
+                                <option value="desert">Пустыня</option>
+                                <option value="ruins">Руины</option>
+                                <option value="camp">Лагерь</option>
+                                <option value="military">Военная база</option>
+                                <option value="military_base">Комплекс Братства</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Настроение</label>
+                            <select name="mood">
+                                <option value="neutral">Нейтральное</option>
+                                <option value="danger">Опасность</option>
+                                <option value="discovery">Открытие</option>
+                                <option value="lore">Лор</option>
+                                <option value="humor">Юмор</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Источник</label>
+                            <input type="text" name="source" placeholder="Fallout 3, NPC, Книга...">
+                        </div>
+                    </div>
+                    <div class="form-group" style="margin-top: 15px;">
+                        <label>Текст фразы</label>
+                        <textarea name="quote_text" rows="3" required style="width: 100%;"></textarea>
+                    </div>
+                    <label style="display: flex; align-items: center; gap: 10px; margin-top: 10px;">
+                        <input type="checkbox" name="is_active" checked> Активна
+                    </label>
+                    <button type="submit" class="btn btn-green" style="margin-top: 15px;">💾 Добавить</button>
                 </form>
             </div>
-            <div class="card"><table><thead><tr><th>ID</th><th>Ключ</th><th>Название</th><th>Ур.</th><th>Босс</th><th>Награда</th><th>Действия</th></tr></thead><tbody>
-            <?php foreach($items as $d): $rew=json_decode($d['reward_json'],true); ?>
-            <tr><td><?= $d['id'] ?></td><td><?= $d['dungeon_key'] ?></td><td><?= $d['name'] ?></td><td><?= $d['min_level'] ?></td><td><?= $d['boss_key']?:'—' ?></td><td><?= $rew['caps']??0 ?>💰</td><td class="actions"><a href="?action=dungeons&id=<?= $d['id'] ?>" class="btn btn-blue btn-sm">✏️</a><form method="POST" onsubmit="return confirm('Удалить?')"><input type="hidden" name="id" value="<?= $d['id'] ?>"><button type="submit" name="delete_dungeon" class="btn btn-red btn-sm">🗑️</button></form></td></tr>
-            <?php endforeach; ?></tbody></table></div>
-        <?php else: ?>
-            <div style="display:flex; gap:10px; margin-bottom:10px;"><a href="?action=dungeons" class="btn btn-ghost">← Список</a></div>
-            <div class="d-editor">
-                <div class="d-grid-wrap">
-                    <div id="d-grid" class="d-grid" style="grid-template-columns: repeat(<?= $dMaxX-$dMinX+1 ?>, 28px);">
-                        <?php for($y=$dMaxY; $y>=$dMinY; $y--): for($x=$dMinX; $x<=$dMaxX; $x++): $node=null; foreach($dNodes as $n) if($n['pos_x']==$x && $n['pos_y']==$y) {$node=$n; break;} $cls='d-empty'; $cnt='+'; $nid=0; if($node){ $cls="d-{$node['tile_type']}"; $nid=$node['id']; switch($node['tile_type']){case'entrance':$cnt='🚪';break;case'boss':$cnt='💀';break;case'treasure':$cnt='💎';break;case'exit':$cnt='🏁';break;case'trap':$cnt='⚠️';break;} } ?>
-                        <div class="d-cell <?= $cls ?>" data-id="<?= $nid ?>" data-x="<?= $x ?>" data-y="<?= $y ?>" data-type="<?= $node['tile_type']??'' ?>" data-loc="<?= $node['location_id']??'' ?>" onclick="hCell(<?= $nid ?>, <?= $x ?>, <?= $y ?>)"><?= $cnt ?></div>
-                        <?php endfor; endfor; ?>
-                    </div>
-                </div>
-                <div class="d-panel">
-                    <h3 style="margin-bottom:10px;">Свойства ноды</h3>
-                    <div id="d-no-sel" style="color:var(--gray);font-size:12px;">Кликни на клетку. Пустая (+) создаст новую.</div>
-                    <div id="d-form" style="display:none;">
-                        <input type="hidden" id="d-nid">
-                        <div class="form-group"><label class="form-label">Тип</label><select class="form-select" id="d-type"><?php $types=['entrance'=>'Вход','corridor'=>'Коридор','room'=>'Комната','boss'=>'Босс','treasure'=>'Сокровище','exit'=>'Выход','trap'=>'Ловушка']; foreach($types as $k=>$v): ?><option value="<?= $k ?>"><?= $v ?></option><?php endforeach; ?></select></div>
-                        <div class="form-group"><label class="form-label">Локация (Лут)</label><select class="form-select" id="d-loc"><option value="">— Нет —</option><?php foreach($locations as $l): ?><option value="<?= $l['id'] ?>"><?= $l['name'] ?></option><?php endforeach; ?></select></div>
-                        <button class="btn btn-blue" style="width:100%" onclick="sProp()">💾 Сохранить</button>
-                        <button class="btn btn-red" style="width:100%; margin-top:5px;" onclick="dNode()">🗑️ Удалить</button>
-                    </div>
+            
+            <div class="card">
+                <h3 style="margin-bottom: 15px;">📜 Все фразы (<?= count($items) ?>)</h3>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Тип</th>
+                            <th>Настроение</th>
+                            <th>Фраза</th>
+                            <th>Источник</th>
+                            <th>Активна</th>
+                            <th>Действия</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ($items as $q): ?>
+                            <tr>
+                                <td><?= $q['id'] ?></td>
+                                <td><span class="badge"><?= htmlspecialchars($q['tile_type']) ?></span></td>
+                                <td><?= htmlspecialchars($q['mood']) ?></td>
+                                <td style="max-width: 300px; overflow: hidden; text-overflow: ellipsis;">
+                                    <?= htmlspecialchars($q['quote_text']) ?>
+                                </td>
+                                <td><?= htmlspecialchars($q['source'] ?? '—') ?></td>
+                                <td><?= $q['is_active'] ? '✓' : '✗' ?></td>
+                                <td>
+                                    <form method="POST" style="display:inline;">
+                                        <?= csrfField() ?>
+                                        <input type="hidden" name="id" value="<?= $q['id'] ?>">
+                                        <input type="hidden" name="quote_text" value="<?= htmlspecialchars($q['quote_text']) ?>">
+                                        <input type="hidden" name="tile_type" value="<?= htmlspecialchars($q['tile_type']) ?>">
+                                        <input type="hidden" name="mood" value="<?= htmlspecialchars($q['mood']) ?>">
+                                        <input type="hidden" name="source" value="<?= htmlspecialchars($q['source'] ?? '') ?>">
+                                        <input type="hidden" name="is_active" value="<?= $q['is_active'] ?>">
+                                        <button type="submit" formaction="?action=edit_quote" class="btn btn-ghost">✏️</button>
+                                    </form>
+                                    <form method="POST" style="display:inline;" onsubmit="return confirm('Удалить фразу?');">
+                                        <?= csrfField() ?>
+                                        <input type="hidden" name="id" value="<?= $q['id'] ?>">
+                                        <button type="submit" name="delete_quote" class="btn btn-red">🗑️</button>
+                                    </form>
+                                </td>
+                            </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+        <?php break; ?>
+        
+        <?php case 'map': ?>
+            <div class="page-header">
+                <h1>🌍 Карта мира</h1>
+                <div class="subtitle">Визуализация и редактирование игрового мира</div>
+            </div>
+            
+            <div class="card" style="margin-bottom: 20px;">
+                <h3 style="margin-bottom: 15px;">⚡ Управление картой</h3>
+                <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                    <a href="?action=generate_map" class="btn" style="background: var(--green); color: #000; padding: 12px 20px;">
+                        🗺️ Сгенерировать карту
+                    </a>
+                    <button onclick="document.getElementById('editPanel').style.display=document.getElementById('editPanel').style.display?'none':'block'" class="btn btn-blue">
+                        ✏️ Редактировать клетку
+                    </button>
                 </div>
             </div>
-            <div class="card" style="margin-top:15px;"><h3 style="margin-bottom:10px;">⚙️ Настройки данжа</h3><form method="POST"><input type="hidden" name="id" value="<?= $editData['id'] ?>">
-                <div class="form-row"><div><label class="form-label">Ключ</label><input class="form-input" name="dungeon_key" value="<?= $editData['dungeon_key'] ?>" required></div><div><label class="form-label">Название</label><input class="form-input" name="name" value="<?= htmlspecialchars($editData['name']) ?>" required></div></div>
-                <div class="form-row"><div><label class="form-label">Мин. уровень</label><input class="form-input" type="number" name="min_level" value="<?= $editData['min_level'] ?>"></div><div><label class="form-label">Босс (ключ монстра)</label><input class="form-input" name="boss_key" value="<?= htmlspecialchars($editData['boss_key']) ?>"></div></div>
-                <div class="form-row"><div><label class="form-label">Награда (Крышки)</label><input class="form-input" type="number" name="base_caps" value="<?= $editData['base_caps'] ?>"></div><div><label class="form-label">Лут (через запятую)</label><input class="form-input" name="loot_keys" value="<?= htmlspecialchars($editData['loot_keys']) ?>"></div></div>
-                <button type="submit" name="save_dungeon" class="btn btn-green" style="margin-top:10px;">💾 Сохранить настройки</button>
-            </form></div>
-        <?php endif; ?>
 
-    <?php elseif (in_array($action, ['monsters','weapons','armors','consumables','loot','locations','users','settings','logs'])): ?>
-        <div class="page-header"><div><h1><?= ucfirst($action) ?></h1><div class="subtitle"><?= $editData?'Редактирование':'Список' ?></div></div></div>
-        <div class="card">
-            <!-- Для экономии места здесь рендерятся формы из твоего оригинала -->
-            <!-- Они полностью сохранены и работают -->
-            <?php if ($action !== 'logs' && $action !== 'users' && $action !== 'settings'): ?>
-            <form method="POST"><input type="hidden" name="id" value="<?= $editData['id']??0 ?>">
-            <div class="form-row"><div class="form-group"><label class="form-label">Ключ</label><input class="form-input" name="<?= $action==='monsters'?'monster_key':'item_key' ?>" value="<?= htmlspecialchars($editData['monster_key']??$editData['item_key']??($editData['location_key']??'')) ?>" required></div><div class="form-group"><label class="form-label">Название</label><input class="form-input" name="name" value="<?= htmlspecialchars($editData['name']??'') ?>" required></div></div>
-            <!-- ... Остальные поля форм идентичны твоей версии, чтобы не дублировать код ... -->
-            <button type="submit" name="save" class="btn btn-blue"><?= $editData?'💾 Сохранить':'➕ Добавить' ?></button>
-            <?php if($editData): ?><form method="POST" style="display:inline;margin-left:10px;" onsubmit="return confirm('Удалить?')"><input type="hidden" name="id" value="<?= $editData['id'] ?>"><button type="submit" name="delete" class="btn btn-red">🗑️</button></form><?php endif; ?>
-            </form>
-            <?php endif; ?>
-            <!-- Таблица списка -->
-            <table style="margin-top:20px;"><thead><tr><th>ID</th><th>Ключ</th><th>Имя</th><th>Статус</th><th>Действия</th></tr></thead><tbody>
-            <?php foreach($items as $i): ?><tr><td><?= $i['id'] ?></td><td><code><?= htmlspecialchars($i['monster_key']??$i['item_key']??$i['location_key']??'—') ?></code></td><td><?= htmlspecialchars($i['name']??'—') ?></td><td><?= ($i['is_active']??1)?'✅':'❌' ?></td><td><a href="?action=<?= $action ?>&id=<?= $i['id'] ?>" class="btn btn-blue btn-sm">✏️</a></td></tr><?php endforeach; ?>
-            </tbody></table>
-        </div>
-    <?php endif; ?>
-</main>
+            <div id="editPanel" class="card" style="display: none; margin-bottom: 20px;">
+                <h3 style="margin-bottom: 15px;">✏️ Редактирование клетки</h3>
+                <form method="POST" id="cellForm">
+                    <?= csrfField() ?>
+                    <input type="hidden" name="update_cell" value="1">
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 15px;">
+                        <div class="form-group">
+                            <label>Координата X</label>
+                            <input type="number" name="pos_x" id="editX" min="0" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Координата Y</label>
+                            <input type="number" name="pos_y" id="editY" min="0" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Тип локации</label>
+                            <select name="location_type_id" id="editType">
+                                <?php foreach ($allTypes as $t): ?>
+                                    <option value="<?= $t['id'] ?>"><?= htmlspecialchars($t['type_name']) ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Локация</label>
+                            <select name="location_id" id="editLocation">
+                                <option value="">— Пусто —</option>
+                                <?php foreach ($allLocations as $loc): ?>
+                                    <option value="<?= $loc['id'] ?>"><?= htmlspecialchars($loc['name']) ?></option>
+                                <?php endforeach; ?>
+                            </select>
+                        </div>
+                    </div>
+                    <button type="submit" class="btn btn-green" style="margin-top: 15px;">💾 Сохранить изменения</button>
+                </form>
+                <div id="cellInfo" style="margin-top: 15px; padding: 10px; background: var(--bg); border-radius: 6px; display: none;"></div>
+            </div>
 
-<script>
+            <div class="card">
+                <?php if (empty($nodes)): ?>
+                    <div style="text-align: center; padding: 40px;">
+                        <p style="color: var(--gray); font-size: 18px; margin-bottom: 20px;">🗺️ Карта пуста</p>
+                        <p style="color: var(--gray);">Нажмите "Сгенерировать карту" для создания мира</p>
+                    </div>
+                <?php else: ?>
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                        <div>
+                            <span style="color: var(--gray);">Размер:</span>
+                            <strong style="color: var(--green);"><?= $maxX - $minX + 1 ?> × <?= $maxY - $minY + 1 ?></strong>
+                            <span style="color: var(--gray); margin-left: 20px;">Клеток:</span>
+                            <strong style="color: var(--green);"><?= count($nodes) ?></strong>
+                        </div>
+                        <div style="color: var(--gray); font-size: 12px;">
+                            Кликните на клетку для редактирования
+                        </div>
+                    </div>
+                    
+                    <div class="map-container" style="max-height: 600px; overflow: auto;">
+                        <div class="map-grid" style="grid-template-columns: repeat(<?= $maxX - $minX + 1 ?>, 20px);">
+                            <?php for ($y = $maxY; $y >= $minY; $y--): ?>
+                                <?php for ($x = $minX; $x <= $maxX; $x++): ?>
+                                    <?php 
+                                    $node = $grid[$y][$x] ?? null;
+                                    $tileType = $node['tile_type'] ?? 'empty';
+                                    $locName = $node['location_name'] ?? '';
+                                    $title = "({$x},{$y})";
+                                    if ($locName) $title .= " - {$locName}";
+                                    ?>
+                                    <div class="map-cell cell-<?= $tileType ?>" 
+                                         title="<?= htmlspecialchars($title) ?>"
+                                         onclick="selectCell(<?= $x ?>, <?= $y ?>, '<?= htmlspecialchars(addslashes($tileType)) ?>', '<?= htmlspecialchars(addslashes($locName)) ?>')"
+                                         style="cursor: pointer;"></div>
+                                <?php endfor; ?>
+                            <?php endfor; ?>
+                        </div>
+                    </div>
+                    
+                    <div style="margin-top: 20px; padding: 15px; background: var(--bg); border-radius: 8px;">
+                        <h4 style="margin-bottom: 10px; color: var(--text);">Легенда:</h4>
+                        <div style="display: flex; flex-wrap: wrap; gap: 15px;">
+                            <?php foreach ($typeColors as $type => $color): ?>
+                                <div style="display: flex; align-items: center; gap: 5px;">
+                                    <div style="width: 16px; height: 16px; background: <?= $color ?>; border-radius: 2px;"></div>
+                                    <span style="font-size: 11px; color: var(--gray);"><?= $type ?></span>
+                                </div>
+                            <?php endforeach; ?>
+                        </div>
+                    </div>
+                <?php endif; ?>
+            </div>
 
-function selectMapNode(id, name, danger, rad) {
-    document.getElementById('node-id-input').value = id || '';
-    document.getElementById('selected-node').value = name || 'Пусто';
-    
-    // Заполняем и активируем поля редактирования
-    document.getElementById('edit-danger').value = danger || 1;
-    document.getElementById('edit-radiation').value = rad || 0;
-    document.getElementById('edit-danger').disabled = false;
-    document.getElementById('edit-radiation').disabled = false;
-    document.getElementById('btn-update-node').disabled = false;
-}
-
-document.addEventListener('DOMContentLoaded', () => {
-    const grid = document.getElementById('mapGrid');
-    const container = document.getElementById('mapContainer');
-    if (!grid || !container) return;
-
-    // Ждем полной отрисовки DOM
-    requestAnimationFrame(() => {
-        const w = grid.scrollWidth;
-        const h = grid.scrollHeight;
-        const cw = container.clientWidth;
-        const ch = container.clientHeight;
+            <script>
+            function selectCell(x, y, type, name) {
+                document.getElementById('editPanel').style.display = 'block';
+                document.getElementById('editX').value = x;
+                document.getElementById('editY').value = y;
+                document.getElementById('cellInfo').style.display = 'block';
+                document.getElementById('cellInfo').innerHTML = 
+                    '<strong style="color: var(--green);">Выбрана клетка:</strong> (' + x + ', ' + y + ') - ' + 
+                    (name || 'Пусто') + ' <span style="color: var(--gray);">[' + type + ']</span>';
+                document.getElementById('cellForm').scrollIntoView({behavior: 'smooth'});
+            }
+            </script>
+        <?php break; ?>
         
-        console.log('Map Debug:', { cols: <?= $cols ?>, w, h, cw, ch });
-
-        if (w > 0 && h > 0 && cw > 0 && ch > 0) {
-            const scale = Math.min(cw / w, ch / h) * 0.95;
-            grid.style.transform = `translate(-50%, -50%) scale(${scale})`;
-        }
-    });
-});
-
-// Карта
-function selMap(id, name){ document.getElementById('node-id').value=id; document.getElementById('sel-node').value=name; }
-document.addEventListener('DOMContentLoaded', ()=>{
-    const g=document.getElementById('mapGrid'); if(!g) return;
-    const c=g.parentElement;
-    const scale = Math.min(c.clientWidth/g.scrollWidth, c.clientHeight/g.scrollHeight)*0.9;
-    g.style.transform = `translate(-50%, -50%) scale(${scale})`;
-});
-
-// Данжи
-let dSel=null;
-function hCell(id, x, y){
-    document.querySelectorAll('.d-cell').forEach(c=>c.classList.remove('selected'));
-    const c = document.querySelector(`.d-cell[data-id='${id}'][data-x='${x}'][data-y='${y}']`); if(c) c.classList.add('selected');
-    if(id>0){ document.getElementById('d-no-sel').style.display='none'; document.getElementById('d-form').style.display='block'; document.getElementById('d-nid').value=id; document.getElementById('d-type').value=c.dataset.type; document.getElementById('d-loc').value=c.dataset.loc||''; }
-    else { if(confirm('Создать ноду?')) fetch('?action=dungeons',{method:'POST',body:new URLSearchParams({ajax_action:'add_node',dungeon_id:<?= $editData['id']??0 ?>,x:x,y:y})}).then(r=>r.json()).then(r=>r.success?location.reload():alert(r.error)); }
-}
-function sProp(){ fetch('?action=dungeons',{method:'POST',body:new URLSearchParams({ajax_action:'update_node',node_id:document.getElementById('d-nid').value,tile_type:document.getElementById('d-type').value,location_id:document.getElementById('d-loc').value})}).then(r=>r.json()).then(r=>r.success?location.reload():alert(r.error)); }
-function dNode(){ if(!confirm('Удалить?')) return; fetch('?action=dungeons',{method:'POST',body:new URLSearchParams({ajax_action:'delete_node',node_id:document.getElementById('d-nid').value,dungeon_id:<?= $editData['id']??0 ?>})}).then(r=>r.json()).then(r=>r.success?location.reload():alert(r.error)); }
-</script>
+        <?php case 'monsters': ?>
+            <div class="page-header">
+                <h1>👹 Монстры</h1>
+                <div class="subtitle">Враги Пустоши</div>
+            </div>
+            <div class="card">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Ключ</th>
+                            <th>Имя</th>
+                            <th>Ур.</th>
+                            <th>HP</th>
+                            <th>Урон</th>
+                            <th>XP</th>
+                            <th>Босс</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ($items as $m): ?>
+                            <tr>
+                                <td><?= $m['id'] ?></td>
+                                <td><code><?= htmlspecialchars($m['monster_key']) ?></code></td>
+                                <td><?= htmlspecialchars($m['name']) ?></td>
+                                <td><?= $m['level'] ?></td>
+                                <td><?= $m['base_hp'] ?></td>
+                                <td><?= $m['base_dmg'] ?></td>
+                                <td><?= $m['xp_reward'] ?></td>
+                                <td><?= $m['is_boss'] ? '👑' : '—' ?></td>
+                            </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+        <?php break; ?>
+        
+        <?php case 'weapons': ?>
+            <div class="page-header"><h1>🔫 Оружие</h1></div>
+            <div class="card">
+                <table>
+                    <thead><tr><th>ID</th><th>Ключ</th><th>Имя</th><th>Урон</th><th>Вес</th><th>Цена</th></tr></thead>
+                    <tbody>
+                        <?php foreach ($items as $w): ?>
+                            <tr>
+                                <td><?= $w['id'] ?></td>
+                                <td><code><?= htmlspecialchars($w['item_key']) ?></code></td>
+                                <td><?= htmlspecialchars($w['name']) ?></td>
+                                <td><?= $w['dmg_dice'] ?>d + <?= $w['dmg_mod'] ?></td>
+                                <td><?= $w['weight'] ?></td>
+                                <td><?= $w['value'] ?> 💰</td>
+                            </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+        <?php break; ?>
+        
+        <?php case 'armors': ?>
+            <div class="page-header"><h1>🛡️ Броня</h1></div>
+            <div class="card">
+                <table>
+                    <thead><tr><th>ID</th><th>Ключ</th><th>Имя</th><th>Защита</th><th>Вес</th><th>Цена</th></tr></thead>
+                    <tbody>
+                        <?php foreach ($items as $a): ?>
+                            <tr>
+                                <td><?= $a['id'] ?></td>
+                                <td><code><?= htmlspecialchars($a['item_key']) ?></code></td>
+                                <td><?= htmlspecialchars($a['name']) ?></td>
+                                <td><?= $a['defense'] ?></td>
+                                <td><?= $a['weight'] ?></td>
+                                <td><?= $a['value'] ?> 💰</td>
+                            </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+        <?php break; ?>
+        
+        <?php case 'consumables': ?>
+            <div class="page-header"><h1>💊 Расходники</h1></div>
+            <div class="card">
+                <table>
+                    <thead><tr><th>ID</th><th>Ключ</th><th>Имя</th><th>HP</th><th>Рад</th><th>Зависимость</th></tr></thead>
+                    <tbody>
+                        <?php foreach ($items as $c): ?>
+                            <tr>
+                                <td><?= $c['id'] ?></td>
+                                <td><code><?= htmlspecialchars($c['item_key']) ?></code></td>
+                                <td><?= htmlspecialchars($c['name']) ?></td>
+                                <td><?= $c['heal_amount'] > 0 ? '+' . $c['heal_amount'] : '—' ?></td>
+                                <td><?= $c['rad_heal'] > 0 ? '-' . $c['rad_heal'] : '—' ?></td>
+                                <td><?= $c['addiction_chance'] ?>%</td>
+                            </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+        <?php break; ?>
+        
+        <?php case 'dungeons': ?>
+            <div class="page-header"><h1>⚔️ Данжи</h1></div>
+            <div class="card">
+                <table>
+                    <thead><tr><th>ID</th><th>Ключ</th><th>Имя</th><th>Мин. ур.</th><th>Размер</th></tr></thead>
+                    <tbody>
+                        <?php foreach ($items as $d): ?>
+                            <tr>
+                                <td><?= $d['id'] ?></td>
+                                <td><code><?= htmlspecialchars($d['dungeon_key']) ?></code></td>
+                                <td><?= htmlspecialchars($d['name']) ?></td>
+                                <td><?= $d['min_level'] ?></td>
+                                <td><?= $d['dungeon_size'] ?? '—' ?></td>
+                            </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+        <?php break; ?>
+        
+        <?php case 'settings': ?>
+            <div class="page-header"><h1>⚙️ Настройки</h1></div>
+            <div class="card">
+                <table>
+                    <thead><tr><th>Ключ</th><th>Значение</th><th>Категория</th><th>Описание</th></tr></thead>
+                    <tbody>
+                        <?php foreach ($items as $s): ?>
+                            <tr>
+                                <td><code><?= htmlspecialchars($s['setting_key']) ?></code></td>
+                                <td>
+                                    <form method="POST" style="display:flex; gap:5px;">
+                                        <?= csrfField() ?>
+                                        <input type="hidden" name="setting_key" value="<?= htmlspecialchars($s['setting_key']) ?>">
+                                        <input type="text" name="setting_value" value="<?= htmlspecialchars($s['setting_value']) ?>" style="width: 100px;">
+                                        <button type="submit" name="save_setting" class="btn btn-blue">💾</button>
+                                    </form>
+                                </td>
+                                <td><?= htmlspecialchars($s['category'] ?? '—') ?></td>
+                                <td><?= htmlspecialchars($s['description'] ?? '—') ?></td>
+                            </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+        <?php break; ?>
+        
+        <?php case 'logs': ?>
+            <div class="page-header">
+                <h1>📜 Логи</h1>
+                <form method="POST" style="display:inline; margin-left: 20px;">
+                    <?= csrfField() ?>
+                    <button type="submit" name="clear_logs" class="btn btn-red" onclick="return confirm('Очистить все логи?')">🗑️ Очистить</button>
+                </form>
+            </div>
+            <div class="card">
+                <table>
+                    <thead><tr><th>ID</th><th>Админ</th><th>Действие</th><th>Таблица</th><th>IP</th><th>Время</th></tr></thead>
+                    <tbody>
+                        <?php foreach ($items as $l): ?>
+                            <tr>
+                                <td><?= $l['id'] ?></td>
+                                <td><?= htmlspecialchars($l['username'] ?? $l['admin_id']) ?></td>
+                                <td><?= htmlspecialchars($l['action']) ?></td>
+                                <td><?= htmlspecialchars($l['table_name']) ?></td>
+                                <td><?= htmlspecialchars($l['ip_address']) ?></td>
+                                <td><?= date('d.m.Y H:i', strtotime($l['created_at'])) ?></td>
+                            </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+        <?php break; ?>
+        
+        <?php default: ?>
+            <div class="page-header"><h1>404</h1><p>Страница не найдена</p></div>
+        <?php endswitch; ?>
+    </main>
 </body>
 </html>

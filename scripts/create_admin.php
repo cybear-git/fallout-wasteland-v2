@@ -1,140 +1,61 @@
 <?php
-// Сообщаем браузеру, что это простой текст.
-header('Content-Type: text/plain; charset=utf-8');
+/**
+ * Скрипт создания администратора
+ * Запуск: php scripts/create_admin.php
+ */
 
-
-// Поднимаемся на уровень выше (../), так как файл лежит в public/
 require_once __DIR__ . '/../config/database.php';
 
-echo "=== Создание учетной записи администратора ===\n";
+$username = 'admin';
+$password = 'admin123';
 
-// 2. Проверяем подключение к БД
+$hash = password_hash($password, PASSWORD_DEFAULT);
+
 try {
     $pdo = getDbConnection();
-    echo "✅ Подключение к базе данных успешно\n";
-} catch (Exception $e) {
-    echo "❌ Ошибка подключения: " . $e->getMessage() . "\n";
-    exit(1);
-}
-
-// 3. Проверяем, существует ли уже таблица players
-try {
-    $stmt = $pdo->query("SHOW TABLES LIKE 'players'");
-    if ($stmt->rowCount() === 0) {
-        echo "❌ Таблица 'players' не найдена. Сначала выполните миграции БД.\n";
-        exit(1);
-    }
-    echo "✅ Таблица 'players' найдена\n";
-} catch (Exception $e) {
-    echo "❌ Ошибка проверки таблицы: " . $e->getMessage() . "\n";
-    exit(1);
-}
-
-// 4. Проверяем, есть ли уже администраторы
-try {
-    $stmt = $pdo->query("SELECT COUNT(*) as count FROM players WHERE role = 'admin'");
-    $result = $stmt->fetch();
-    $adminCount = (int)$result['count'];
     
-    if ($adminCount > 0) {
-        echo "⚠️ В базе уже есть $adminCount администратор(ов).\n";
-        echo "Если вы хотите создать еще одного, продолжайте.\n";
+    // Проверяем существование роли admin
+    $stmt = $pdo->prepare("SELECT id FROM roles WHERE role_name = 'admin' LIMIT 1");
+    $stmt->execute();
+    $adminRole = $stmt->fetch();
+    
+    if (!$adminRole) {
+        // Создаем роль admin если её нет
+        $stmt = $pdo->prepare("INSERT INTO roles (role_name) VALUES ('admin')");
+        $stmt->execute();
+        $adminRoleId = (int)$pdo->lastInsertId();
     } else {
-        echo "ℹ️ Администраторов пока нет. Создаем первого.\n";
+        $adminRoleId = (int)$adminRole['id'];
     }
-} catch (Exception $e) {
-    echo "❌ Ошибка проверки администраторов: " . $e->getMessage() . "\n";
-    exit(1);
-}
-
-// 5. Данные для создания админа
-$adminData = [
-    'username' => 'admin',
-    'password' => 'admin123', // Пароль по умолчанию - ОБЯЗАТЕЛЬНО смени после входа!
-    'role' => 'admin'
-];
-
-// Валидация данных
-if (empty($adminData['username']) || empty($adminData['password'])) {
-    echo "❌ Логин и пароль обязательны\n";
-    exit(1);
-}
-
-if (strlen($adminData['password']) < 4) {
-    echo "❌ Пароль должен быть минимум 4 символа\n";
-    exit(1);
-}
-
-echo "\n📝 Данные для создания:\n";
-echo "   Логин: " . $adminData['username'] . "\n";
-echo "   Роль: " . $adminData['role'] . "\n";
-
-// 6. Проверяем, не существует ли уже такой логин
-try {
+    
+    // Проверяем существование пользователя
     $stmt = $pdo->prepare("SELECT id FROM players WHERE username = ?");
-    $stmt->execute([$adminData['username']]);
-    $existingUser = $stmt->fetch();
+    $stmt->execute([$username]);
+    $existing = $stmt->fetch();
     
-    if ($existingUser) {
-        echo "⚠️ Пользователь с логином '{$adminData['username']}' уже существует.\n";
-        echo "   ID: {$existingUser['id']}\n";
+    if ($existing) {
+        // Обновляем пароль и роль
+        $stmt = $pdo->prepare("UPDATE players SET password_hash = ?, role_id = ? WHERE username = ?");
+        $stmt->execute([$hash, $adminRoleId, $username]);
+        echo "Админ обновлен!\n";
+    } else {
+        // Создаем нового админа
+        $stmt = $pdo->prepare("INSERT INTO players (username, password_hash, role_id, is_active) VALUES (?, ?, ?, 1)");
+        $stmt->execute([$username, $hash, $adminRoleId]);
         
-        // ВНИМАНИЕ: Этот блок работает только в консоли (терминале).
-        // В браузере скрипт здесь "зависнет", ожидая ввода.
-        echo "   Хотите обновить пароль? (y/n): ";
+        $playerId = (int)$pdo->lastInsertId();
         
-        $handle = fopen("php://stdin", "r");
-        $choice = trim(fgets($handle));
-        fclose($handle);
+        // Создаем персонажа для админа
+        $stmt = $pdo->prepare("INSERT INTO characters (player_id, name, level, hp, max_hp, pos_x, pos_y) VALUES (?, ?, 1, 100, 100, 0, 0)");
+        $stmt->execute([$playerId, $username]);
         
-        if (strtolower($choice) !== 'y') {
-            echo "❌ Отмена создания.\n";
-            exit(0);
-        }
-        
-        // Обновляем пароль существующего пользователя
-        $passwordHash = password_hash($adminData['password'], PASSWORD_DEFAULT);
-        $stmt = $pdo->prepare("UPDATE players SET password_hash = ?, role = 'admin' WHERE username = ?");
-        $stmt->execute([$passwordHash, $adminData['username']]);
-        
-        echo "✅ Пароль обновлен для пользователя '{$adminData['username']}'\n";
-        exit(0);
+        echo "Админ создан!\n";
     }
-} catch (Exception $e) {
-    echo "❌ Ошибка проверки логина: " . $e->getMessage() . "\n";
-    exit(1);
+    
+    echo "Логин: $username\n";
+    echo "Пароль: $password\n";
+    echo "\nURL входа в админку: http://localhost:1317/admin_login.php\n";
+    
+} catch (PDOException $e) {
+    echo "Ошибка: " . $e->getMessage() . "\n";
 }
-
-// 7. Создаем нового администратора
-try {
-    // Хешируем пароль с использованием современного алгоритма
-    $passwordHash = password_hash($adminData['password'], PASSWORD_DEFAULT);
-    
-    $stmt = $pdo->prepare("
-        INSERT INTO players (username, password_hash, role, is_active, created_at, updated_at)
-        VALUES (?, ?, 'admin', 1, NOW(), NOW())
-    ");
-    
-    $stmt->execute([
-        $adminData['username'],
-        $passwordHash,
-    ]);
-    
-    $adminId = $pdo->lastInsertId();
-    
-    echo "\n🎉 Администратор успешно создан!\n";
-    echo "   ID: $adminId\n";
-    echo "   Логин: {$adminData['username']}\n";
-    echo "   Пароль: {$adminData['password']}\n";
-    echo "   ⚠️ ОБЯЗАТЕЛЬНО смени пароль после первого входа!\n";
-    
-} catch (Exception $e) {
-    echo "❌ Ошибка создания администратора: " . $e->getMessage() . "\n";
-    exit(1);
-}
-
-echo "\n=== Готово ===\n";
-echo "Теперь можешь войти в систему с логином '{$adminData['username']}' и паролем '{$adminData['password']}'\n";
-echo "После входа перейди в личный кабинет и смени пароль!\n";
-
-?>

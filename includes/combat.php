@@ -9,21 +9,81 @@ declare(strict_types=1);
 require_once __DIR__ . '/../config/database.php';
 
 /**
+ * Проверка и расход боеприпасов
+ */
+function consumeAmmo(int $characterId, string $ammoTypeName): bool {
+    global $pdo;
+    if ($ammoTypeName === 'none' || empty($ammoTypeName)) return true;
+    
+    $stmt = $pdo->prepare("
+        SELECT pa.quantity 
+        FROM player_ammo pa
+        JOIN ammo_types at ON at.id = pa.ammo_type_id
+        JOIN characters c ON c.player_id = pa.player_id
+        WHERE c.id = ? AND at.type_name = ?
+    ");
+    $stmt->execute([$characterId, $ammoTypeName]);
+    $qty = $stmt->fetchColumn();
+    
+    if ($qty && $qty > 0) {
+        $stmt = $pdo->prepare("
+            UPDATE player_ammo pa
+            JOIN characters c ON c.player_id = pa.player_id
+            JOIN ammo_types at ON at.id = pa.ammo_type_id
+            SET pa.quantity = pa.quantity - 1 
+            WHERE c.id = ? AND at.type_name = ?
+        ");
+        $stmt->execute([$characterId, $ammoTypeName]);
+        return true;
+    }
+    return false;
+}
+
+/**
+ * Получить тип патронов экипированного оружия
+ */
+function getEquippedAmmoType(int $characterId): string {
+    global $pdo;
+    $stmt = $pdo->prepare("
+        SELECT at.type_name 
+        FROM inventory i 
+        JOIN weapons w ON i.item_key = w.item_key
+        JOIN ammo_types at ON at.id = w.ammo_type_id
+        WHERE i.character_id = ? AND i.equipped = 1 AND i.item_type = 'weapon'
+        LIMIT 1
+    ");
+    $stmt->execute([$characterId]);
+    return $stmt->fetchColumn() ?: 'none';
+}
+
+/**
+ * Получить ID игрока по ID персонажа
+ */
+function getPlayerIdByCharacterId(int $characterId): int {
+    global $pdo;
+    $stmt = $pdo->prepare("SELECT player_id FROM characters WHERE id = ?");
+    $stmt->execute([$characterId]);
+    return (int)$stmt->fetchColumn();
+}
+
+/**
  * Начать бой с монстром
  */
-function startCombat(int $playerId, int $monsterId, ?int $locationId = null, ?int $dungeonNodeId = null): array {
+function startCombat(int $characterId, int $monsterId, ?int $locationId = null, ?int $dungeonNodeId = null): array {
     global $pdo;
     
     try {
-        $player = getPlayerStats($playerId);
+        $player = getCharacterStats($characterId);
         if (!$player) {
-            return ['success' => false, 'error' => 'Игрок не найден'];
+            return ['success' => false, 'error' => 'Персонаж не найден'];
         }
         
         $monster = getMonsterData($monsterId);
         if (!$monster) {
             return ['success' => false, 'error' => 'Монстр не найден'];
         }
+        
+        $playerId = getPlayerIdByCharacterId($characterId);
         
         $enemyJson = json_encode([
             [
@@ -36,23 +96,23 @@ function startCombat(int $playerId, int $monsterId, ?int $locationId = null, ?in
                 'armor' => $monster['base_armor'],
                 'damage' => $monster['base_dmg'],
                 'xp_reward' => $monster['xp_reward'],
-                'loot_table' => json_decode($monster['loot_table'], true)
+                'loot_table' => json_decode($monster['loot_table'] ?? '[]', true)
             ]
         ]);
         
-        $initiativeOrder = json_encode([$playerId, -1]);
+        $initiativeOrder = json_encode([$characterId, -1]);
         
         $stmt = $pdo->prepare("
             INSERT INTO combats (player_id, location_id, dungeon_node_id, enemy_json, initiative_order, current_turn_index)
-            VALUES (:player_id, :location_id, :dungeon_node_id, :enemy_json, :initiative_order, 0)
+            VALUES (?, ?, ?, ?, ?, 0)
         ");
         
         $stmt->execute([
-            ':player_id' => $playerId,
-            ':location_id' => $locationId,
-            ':dungeon_node_id' => $dungeonNodeId,
-            ':enemy_json' => $enemyJson,
-            ':initiative_order' => $initiativeOrder
+            $playerId,
+            $locationId,
+            $dungeonNodeId,
+            $enemyJson,
+            $initiativeOrder
         ]);
         
         $combatId = (int)$pdo->lastInsertId();
@@ -75,34 +135,37 @@ function startCombat(int $playerId, int $monsterId, ?int $locationId = null, ?in
 }
 
 /**
- * Получить данные игрока с экипировкой
+ * Получить данные персонажа с экипировкой
  */
-function getPlayerStats(int $playerId): ?array {
+function getCharacterStats(int $characterId): ?array {
     global $pdo;
     
     $stmt = $pdo->prepare("
-        SELECT p.*, 
-               COALESCE(SUM(CASE WHEN i.equipped_slot IS NOT NULL THEN w.dmg_mod ELSE 0 END), 0) as weapon_dmg,
-               COALESCE(SUM(CASE WHEN i.equipped_slot IS NOT NULL THEN a.defense ELSE 0 END), 0) as armor_def
-        FROM players p
-        LEFT JOIN inventory i ON p.id = i.player_id AND i.equipped_slot IS NOT NULL
-        LEFT JOIN weapons w ON i.item_type = 'weapon' AND i.item_key = w.item_key
-        LEFT JOIN armors a ON i.item_type = 'armor' AND i.item_key = a.item_key
-        WHERE p.id = :player_id
-        GROUP BY p.id
+        SELECT c.*, p.username as player_name
+        FROM characters c
+        JOIN players p ON p.id = c.player_id
+        WHERE c.id = ?
     ");
     
-    $stmt->execute([':player_id' => $playerId]);
+    $stmt->execute([$characterId]);
     $result = $stmt->fetch(PDO::FETCH_ASSOC);
     
     if (!$result) {
         return null;
     }
     
-    $effects = getPlayerEffects($playerId);
+    $effects = getPlayerEffects($result['player_id']);
     $result['effects'] = $effects;
     
     return $result;
+}
+
+function getPlayerStats(int $playerId): ?array {
+    global $pdo;
+    $stmt = $pdo->prepare("SELECT id FROM characters WHERE player_id = ?");
+    $stmt->execute([$playerId]);
+    $characterId = $stmt->fetchColumn();
+    return $characterId ? getCharacterStats((int)$characterId) : null;
 }
 
 /**
@@ -111,8 +174,8 @@ function getPlayerStats(int $playerId): ?array {
 function getMonsterData(int $monsterId): ?array {
     global $pdo;
     
-    $stmt = $pdo->prepare("SELECT * FROM monsters WHERE id = :id");
-    $stmt->execute([':id' => $monsterId]);
+    $stmt = $pdo->prepare("SELECT * FROM monsters WHERE id = ?");
+    $stmt->execute([$monsterId]);
     $result = $stmt->fetch(PDO::FETCH_ASSOC);
     
     return $result ?: null;
@@ -127,25 +190,25 @@ function getPlayerEffects(int $playerId): array {
     $stmt = $pdo->prepare("
         SELECT effect_key, effect_name, stat_modifier, expires_at
         FROM player_effects
-        WHERE player_id = :player_id AND (expires_at IS NULL OR expires_at > NOW())
+        WHERE player_id = ? AND (expires_at IS NULL OR expires_at > NOW())
     ");
     
-    $stmt->execute([':player_id' => $playerId]);
+    $stmt->execute([$playerId]);
     return $stmt->fetchAll(PDO::FETCH_ASSOC);
 }
 
 /**
  * Атака в бою
  */
-function combatAttack(int $combatId, int $playerId, int $targetIndex): array {
+function combatAttack(int $combatId, int $characterId, int $targetIndex): array {
     global $pdo;
     
     try {
-        $stmt = $pdo->prepare("SELECT * FROM combats WHERE id = :id AND combat_state = 'active'");
-        $stmt->execute([':id' => $combatId]);
+        $stmt = $pdo->prepare("SELECT * FROM combats WHERE id = ?");
+        $stmt->execute([$combatId]);
         $combat = $stmt->fetch(PDO::FETCH_ASSOC);
         
-        if (!$combat) {
+        if (!$combat || ($combat['state_id'] ?? 0) > 0) {
             return ['success' => false, 'error' => 'Бой не найден или завершен'];
         }
         
@@ -156,12 +219,23 @@ function combatAttack(int $combatId, int $playerId, int $targetIndex): array {
         }
         
         $enemy = &$enemies[$targetIndex];
-        $player = getPlayerStats($playerId);
+        $player = getCharacterStats($characterId);
+        $playerId = getPlayerIdByCharacterId($characterId);
         
-        $weaponDamage = getEquippedWeaponDamage($playerId);
+        $ammoType = getEquippedAmmoType($characterId);
+        $hasAmmo = consumeAmmo($characterId, $ammoType);
+        
+        $weaponDamage = getEquippedWeaponDamage($characterId);
+        if (!$hasAmmo) {
+            $weaponDamage = 0;
+            $description_prefix = "У вас закончились патроны! Вы бьете рукоятью: ";
+        } else {
+            $description_prefix = "";
+        }
+        
         $baseDamage = (int)($player['strength'] / 2) + $weaponDamage;
         
-        $critChance = (float)getSetting('crit_chance_base', '0.05');
+        $critChance = 0.05;
         $isCrit = (mt_rand(1, 100) <= ($critChance * 100));
         $critMultiplier = $isCrit ? 2.0 : 1.0;
         
@@ -172,18 +246,15 @@ function combatAttack(int $combatId, int $playerId, int $targetIndex): array {
         $enemy['hp'] = max(0, $enemy['hp'] - $finalDamage);
         $hpAfter = $enemy['hp'];
         
-        $stmt = $pdo->prepare("UPDATE combats SET enemy_json = :enemy_json WHERE id = :id");
-        $stmt->execute([
-            ':enemy_json' => json_encode($enemies),
-            ':id' => $combatId
-        ]);
+        $stmt = $pdo->prepare("UPDATE combats SET enemy_json = ? WHERE id = ?");
+        $stmt->execute([json_encode($enemies), $combatId]);
         
         $actionType = $isCrit ? 'crit' : 'attack';
-        $description = $isCrit 
+        $description = $description_prefix . ($isCrit 
             ? "КРИТИЧЕСКИЙ УДАР! Вы нанесли {$finalDamage} урона {$enemy['name']}"
-            : "Вы атаковали {$enemy['name']} и нанесли {$finalDamage} урона";
+            : "Вы атаковали {$enemy['name']} и нанесли {$finalDamage} урона");
         
-        logCombatAction($combatId, 'player', $playerId, $actionType, 'monster', $targetIndex, 
+        logCombatAction($combatId, 'player', $characterId, $actionType, 'monster', $targetIndex, 
             $finalDamage, 0, $hpBefore, $hpAfter, $description);
         
         $killed = false;
@@ -194,8 +265,16 @@ function combatAttack(int $combatId, int $playerId, int $targetIndex): array {
             $killed = true;
             $xpGained = $enemy['xp_reward'];
             
-            grantXp($playerId, $xpGained);
-            $lootDropped = generateLoot($enemy['loot_table']);
+            grantXp($characterId, $xpGained);
+            
+            if (!empty($enemy['loot_table'])) {
+                $lootDropped = generateLoot($enemy['loot_table'], $characterId);
+            }
+            
+            $ammoTypes = ['bullet', 'energy', 'junk'];
+            $ammoType = $ammoTypes[array_rand($ammoTypes)];
+            $ammoAmount = rand(1, 10);
+            grantAmmo($playerId, $ammoType, $ammoAmount);
             
             $allDead = true;
             foreach ($enemies as $e) {
@@ -222,7 +301,7 @@ function combatAttack(int $combatId, int $playerId, int $targetIndex): array {
         
         $enemyResponse = null;
         if (!$killed && $enemy['hp'] > 0) {
-            $enemyResponse = monsterTurn($combatId, $playerId, $targetIndex, $enemy);
+            $enemyResponse = monsterTurn($combatId, $characterId, $targetIndex, $enemy);
         }
         
         return [
@@ -247,18 +326,18 @@ function combatAttack(int $combatId, int $playerId, int $targetIndex): array {
 /**
  * Получить урон экипированного оружия
  */
-function getEquippedWeaponDamage(int $playerId): int {
+function getEquippedWeaponDamage(int $characterId): int {
     global $pdo;
     
     $stmt = $pdo->prepare("
         SELECT COALESCE(w.dmg_mod, 0) as damage
         FROM inventory i
         JOIN weapons w ON i.item_key = w.item_key
-        WHERE i.player_id = :player_id AND i.equipped_slot = 'main_hand'
+        WHERE i.character_id = ? AND i.equipped = 1 AND i.item_type = 'weapon'
         LIMIT 1
     ");
     
-    $stmt->execute([':player_id' => $playerId]);
+    $stmt->execute([$characterId]);
     $result = $stmt->fetch(PDO::FETCH_ASSOC);
     
     return $result ? (int)$result['damage'] : 0;
@@ -267,29 +346,29 @@ function getEquippedWeaponDamage(int $playerId): int {
 /**
  * Ход монстра
  */
-function monsterTurn(int $combatId, int $playerId, int $monsterIndex, array &$monster): ?array {
+function monsterTurn(int $combatId, int $characterId, int $monsterIndex, array &$monster): ?array {
     global $pdo;
     
-    $player = getPlayerStats($playerId);
-    $playerHp = $player['current_hp'];
+    $player = getCharacterStats($characterId);
+    $playerHp = $player['hp'];
     
     $baseDamage = $monster['damage'];
-    $armorReduction = getPlayerArmor($playerId);
+    $armorReduction = getPlayerArmor($characterId);
     $finalDamage = max(1, $baseDamage - $armorReduction);
     
     $newHp = max(0, $playerHp - $finalDamage);
     
-    $stmt = $pdo->prepare("UPDATE players SET current_hp = :hp WHERE id = :id");
-    $stmt->execute([':hp' => $newHp, ':id' => $playerId]);
+    $stmt = $pdo->prepare("UPDATE characters SET hp = ? WHERE id = ?");
+    $stmt->execute([$newHp, $characterId]);
     
     $description = "{$monster['name']} атакует вас и наносит {$finalDamage} урона!";
     
-    logCombatAction($combatId, 'monster', $monsterIndex, 'attack', 'player', $playerId, 
+    logCombatAction($combatId, 'monster', $monsterIndex, 'attack', 'player', $characterId, 
         $finalDamage, $finalDamage, $playerHp, $newHp, $description);
     
     if ($newHp <= 0) {
         endCombat($combatId, 'lost');
-        applyDeathPenalty($playerId);
+        applyDeathPenalty($characterId);
         
         return [
             'player_hit' => true,
@@ -310,60 +389,63 @@ function monsterTurn(int $combatId, int $playerId, int $monsterIndex, array &$mo
 }
 
 /**
- * Получить защиту брони игрока
+ * Получить защиту брони персонажа
  */
-function getPlayerArmor(int $playerId): int {
+function getPlayerArmor(int $characterId): int {
     global $pdo;
     
     $stmt = $pdo->prepare("
         SELECT COALESCE(SUM(a.defense), 0) as total_armor
         FROM inventory i
         JOIN armors a ON i.item_key = a.item_key
-        WHERE i.player_id = :player_id AND i.equipped_slot IS NOT NULL
+        WHERE i.character_id = ? AND i.equipped = 1 AND i.item_type = 'armor'
     ");
     
-    $stmt->execute([':player_id' => $playerId]);
+    $stmt->execute([$characterId]);
     $result = $stmt->fetch(PDO::FETCH_ASSOC);
     
     return (int)($result['total_armor'] ?? 0);
 }
 
 /**
- * Выдать опыт игроку
+ * Выдать опыт персонажу
  */
-function grantXp(int $playerId, int $amount): void {
+function grantXp(int $characterId, int $amount): void {
     global $pdo;
     
-    $multiplier = (float)getSetting('xp_multiplier', '1.0');
-    $finalXp = (int)($amount * $multiplier);
-    
     $stmt = $pdo->prepare("
-        UPDATE players 
-        SET experience = experience + :xp, 
-            level = FLOOR((experience + :xp) / 100) + 1
-        WHERE id = :id
+        UPDATE characters 
+        SET xp = xp + ?,
+            level = FLOOR((xp + ?) / 100) + 1
+        WHERE id = ?
     ");
     
-    $stmt->execute([':xp' => $finalXp, ':id' => $playerId]);
+    $stmt->execute([$amount, $amount, $characterId]);
 }
 
 /**
  * Сгенерировать лут из loot_table
  */
-function generateLoot(array $lootTable): array {
+function generateLoot(array $lootTable, int $characterId): array {
+    global $pdo;
     $droppedItems = [];
-    $dropChance = (float)getSetting('loot_drop_chance', '0.75');
     
     foreach ($lootTable as $item) {
-        if (mt_rand(1, 100) > ($item['chance'] * 100 * $dropChance)) {
+        $chance = $item['chance'] ?? 0.5;
+        if (mt_rand(1, 100) > ($chance * 100)) {
             continue;
         }
         
         $qty = mt_rand($item['min_qty'] ?? 1, $item['max_qty'] ?? 1);
         
+        $itemType = $item['type'] ?? 'loot';
+        $itemKey = $item['key'] ?? '';
+        
+        addInventoryItem($characterId, $itemType, $itemKey, $qty);
+        
         $droppedItems[] = [
-            'type' => $item['type'],
-            'key' => $item['key'],
+            'type' => $itemType,
+            'key' => $itemKey,
             'quantity' => $qty
         ];
     }
@@ -372,60 +454,41 @@ function generateLoot(array $lootTable): array {
 }
 
 /**
- * Добавить лут в инвентарь игрока
- */
-function addLootToInventory(int $playerId, array $lootItems): array {
-    global $pdo;
-    $added = [];
-    
-    foreach ($lootItems as $item) {
-        $tableMap = [
-            'loot' => 'loot',
-            'weapon' => 'weapons',
-            'armor' => 'armors',
-            'consumable' => 'consumables'
-        ];
-        
-        $tableName = $tableMap[$item['type']] ?? 'loot';
-        
-        $stmt = $pdo->prepare("SELECT * FROM {$tableName} WHERE item_key = :key");
-        $stmt->execute([':key' => $item['key']]);
-        $itemData = $stmt->fetch(PDO::FETCH_ASSOC);
-        
-        if (!$itemData) {
-            continue;
-        }
-        
-        addInventoryItem($playerId, $item['type'], $item['key'], $item['quantity']);
-        
-        $added[] = [
-            'name' => $itemData['name'],
-            'quantity' => $item['quantity'],
-            'type' => $item['type']
-        ];
-    }
-    
-    return $added;
-}
-
-/**
  * Добавить предмет в инвентарь
  */
-function addInventoryItem(int $playerId, string $itemType, string $itemKey, int $quantity = 1): bool {
+function addInventoryItem(int $characterId, string $itemType, string $itemKey, int $quantity = 1): bool {
     global $pdo;
     
     $stmt = $pdo->prepare("
-        INSERT INTO inventory (player_id, item_type, item_key, quantity, condition_pct)
-        VALUES (:player_id, :item_type, :item_key, :quantity, 100.00)
-        ON DUPLICATE KEY UPDATE quantity = quantity + :quantity
+        INSERT INTO inventory (character_id, item_type, item_key, quantity)
+        VALUES (?, ?, ?, ?)
+        ON DUPLICATE KEY UPDATE quantity = quantity + ?
     ");
     
-    return $stmt->execute([
-        ':player_id' => $playerId,
-        ':item_type' => $itemType,
-        ':item_key' => $itemKey,
-        ':quantity' => $quantity
-    ]);
+    return $stmt->execute([$characterId, $itemType, $itemKey, $quantity, $quantity]);
+}
+
+/**
+ * Выдать боеприпасы игроку
+ */
+function grantAmmo(int $playerId, string $ammoTypeName, int $amount): void {
+    global $pdo;
+    if ($ammoTypeName === 'none') return;
+    
+    $stmt = $pdo->prepare("
+        SELECT id FROM ammo_types WHERE type_name = ?
+    ");
+    $stmt->execute([$ammoTypeName]);
+    $ammoTypeId = $stmt->fetchColumn();
+    
+    if (!$ammoTypeId) return;
+    
+    $stmt = $pdo->prepare("
+        INSERT INTO player_ammo (player_id, ammo_type_id, quantity)
+        VALUES (?, ?, ?)
+        ON DUPLICATE KEY UPDATE quantity = quantity + ?
+    ");
+    $stmt->execute([$playerId, $ammoTypeId, $amount, $amount]);
 }
 
 /**
@@ -434,37 +497,31 @@ function addInventoryItem(int $playerId, string $itemType, string $itemKey, int 
 function endCombat(int $combatId, string $state): void {
     global $pdo;
     
-    $stmt = $pdo->prepare("
-        UPDATE combats 
-        SET combat_state = :state, ended_at = NOW()
-        WHERE id = :id
-    ");
+    $stateId = match($state) {
+        'won' => 2,
+        'lost' => 3,
+        'fled' => 4,
+        default => 1
+    };
     
-    $stmt->execute([
-        ':state' => $state,
-        ':id' => $combatId
-    ]);
+    $stmt = $pdo->prepare("UPDATE combats SET state_id = ?, ended_at = NOW() WHERE id = ?");
+    $stmt->execute([$stateId, $combatId]);
 }
 
 /**
  * Применить штраф смерти
  */
-function applyDeathPenalty(int $playerId): void {
+function applyDeathPenalty(int $characterId): void {
     global $pdo;
     
-    $penalty = (float)getSetting('xp_death_penalty', '0.1');
-    
     $stmt = $pdo->prepare("
-        UPDATE players 
-        SET experience = GREATEST(0, FLOOR(experience - (experience * :penalty))),
-            current_hp = FLOOR(max_hp * 0.5)
-        WHERE id = :id
+        UPDATE characters 
+        SET xp = GREATEST(0, FLOOR(xp * 0.9)),
+            hp = FLOOR(max_hp * 0.5)
+        WHERE id = ?
     ");
     
-    $stmt->execute([
-        ':penalty' => $penalty,
-        ':id' => $playerId
-    ]);
+    $stmt->execute([$characterId]);
 }
 
 /**
@@ -478,47 +535,28 @@ function logCombatAction(int $combatId, string $actorType, int $actorId, string 
     $stmt = $pdo->prepare("
         INSERT INTO combat_logs (combat_id, actor_type, actor_id, action_type, target_type, target_id,
                                  damage_dealt, damage_taken, hp_before, hp_after, description)
-        VALUES (:combat_id, :actor_type, :actor_id, :action_type, :target_type, :target_id,
-                :damage_dealt, :damage_taken, :hp_before, :hp_after, :description)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ");
     
     $stmt->execute([
-        ':combat_id' => $combatId,
-        ':actor_type' => $actorType,
-        ':actor_id' => $actorId,
-        ':action_type' => $actionType,
-        ':target_type' => $targetType,
-        ':target_id' => $targetId,
-        ':damage_dealt' => $damageDealt,
-        ':damage_taken' => $damageTaken,
-        ':hp_before' => $hpBefore,
-        ':hp_after' => $hpAfter,
-        ':description' => $description
+        $combatId,
+        $actorType,
+        $actorId,
+        $actionType,
+        $targetType,
+        $targetId,
+        $damageDealt,
+        $damageTaken,
+        $hpBefore,
+        $hpAfter,
+        $description
     ]);
-}
-
-/**
- * Получить настройку из БД
- */
-function getSetting(string $key, string $default = ''): string {
-    global $pdo;
-    
-    static $cache = [];
-    
-    if (!isset($cache[$key])) {
-        $stmt = $pdo->prepare("SELECT setting_value FROM game_settings WHERE setting_key = :key");
-        $stmt->execute([':key' => $key]);
-        $result = $stmt->fetchColumn();
-        $cache[$key] = $result ?: $default;
-    }
-    
-    return $cache[$key];
 }
 
 /**
  * Побег из боя
  */
-function fleeCombat(int $combatId, int $playerId): array {
+function fleeCombat(int $combatId, int $characterId): array {
     global $pdo;
     
     $success = mt_rand(1, 100) <= 50;
@@ -532,10 +570,8 @@ function fleeCombat(int $combatId, int $playerId): array {
             'message' => 'Вам удалось сбежать!'
         ];
     } else {
-        $stmt = $pdo->prepare("
-            UPDATE combats SET current_turn_index = current_turn_index + 1 WHERE id = :id
-        ");
-        $stmt->execute([':id' => $combatId]);
+        $stmt = $pdo->prepare("UPDATE combats SET current_turn_index = current_turn_index + 1 WHERE id = ?");
+        $stmt->execute([$combatId]);
         
         return [
             'success' => true,
@@ -548,50 +584,46 @@ function fleeCombat(int $combatId, int $playerId): array {
 /**
  * Использование предмета в бою
  */
-function useItemInCombat(int $combatId, int $playerId, int $inventoryItemId): array {
+function useItemInCombat(int $combatId, int $characterId, int $inventoryItemId): array {
     global $pdo;
     
     $stmt = $pdo->prepare("
-        SELECT i.*, c.heal_amount, c.rad_heal, c.boost_type, c.boost_value
+        SELECT i.*, c.heal_amount, c.rad_heal, c.boost_type, c.boost_value, c.name as item_name
         FROM inventory i
         LEFT JOIN consumables c ON i.item_key = c.item_key
-        WHERE i.id = :id AND i.player_id = :player_id
+        WHERE i.id = ? AND i.character_id = ?
     ");
     
-    $stmt->execute([
-        ':id' => $inventoryItemId,
-        ':player_id' => $playerId
-    ]);
-    
+    $stmt->execute([$inventoryItemId, $characterId]);
     $item = $stmt->fetch(PDO::FETCH_ASSOC);
     
     if (!$item || $item['item_type'] !== 'consumable') {
         return ['success' => false, 'error' => 'Нельзя использовать этот предмет'];
     }
     
-    $player = getPlayerStats($playerId);
+    $player = getCharacterStats($characterId);
     $effectApplied = false;
     $message = '';
     
     if ($item['heal_amount'] > 0) {
-        $newHp = min($player['max_hp'], $player['current_hp'] + $item['heal_amount']);
+        $newHp = min($player['max_hp'], $player['hp'] + $item['heal_amount']);
         
-        $stmt = $pdo->prepare("UPDATE players SET current_hp = :hp WHERE id = :id");
-        $stmt->execute([':hp' => $newHp, ':id' => $playerId]);
+        $stmt = $pdo->prepare("UPDATE characters SET hp = ? WHERE id = ?");
+        $stmt->execute([$newHp, $characterId]);
         
-        $message = "Вы использовали {$item['name']} и восстановили " . ($newHp - $player['current_hp']) . " HP.";
+        $message = "Вы использовали {$item['item_name']} и восстановили " . ($newHp - $player['hp']) . " HP.";
         $effectApplied = true;
     }
     
     if ($item['quantity'] > 1) {
-        $stmt = $pdo->prepare("UPDATE inventory SET quantity = quantity - 1 WHERE id = :id");
-        $stmt->execute([':id' => $inventoryItemId]);
+        $stmt = $pdo->prepare("UPDATE inventory SET quantity = quantity - 1 WHERE id = ?");
+        $stmt->execute([$inventoryItemId]);
     } else {
-        $stmt = $pdo->prepare("DELETE FROM inventory WHERE id = :id");
-        $stmt->execute([':id' => $inventoryItemId]);
+        $stmt = $pdo->prepare("DELETE FROM inventory WHERE id = ?");
+        $stmt->execute([$inventoryItemId]);
     }
     
-    logCombatAction($combatId, 'player', $playerId, 'use_item', null, null, 0, 0, null, null, $message);
+    logCombatAction($combatId, 'player', $characterId, 'use_item', null, null, 0, 0, null, null, $message);
     
     return [
         'success' => true,

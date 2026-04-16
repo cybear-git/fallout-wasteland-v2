@@ -1,2 +1,1 @@
-# Migration report
-MIGRATION_FIX_REPORT.md
+Nothing needs to be added to .gitignore since only a SQL file was modified and no build artifacts, dependencies, or temporary files were detected in the changes.

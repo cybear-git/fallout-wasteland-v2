@@ -19,22 +19,26 @@ $keeperData = null;
 $playerData = null;
 
 try {
-    // Получаем данные игрока
+    // Получаем данные персонажа
     $stmt = $pdo->prepare("
-        SELECT p.*, mn.x, mn.y, mn.tile_type, mn.id as current_node_id
-        FROM players p
-        LEFT JOIN map_nodes mn ON p.current_map_node_id = mn.id
-        WHERE p.id = :id
+        SELECT c.*, p.username,
+               mn.id as map_node_id, mn.pos_x, mn.pos_y,
+               lt.type_name as tile_type
+        FROM characters c
+        JOIN players p ON p.id = c.player_id
+        LEFT JOIN map_nodes mn ON mn.pos_x = c.pos_x AND mn.pos_y = c.pos_y
+        LEFT JOIN location_types lt ON lt.id = mn.location_type_id
+        WHERE c.player_id = :id
     ");
     $stmt->execute([':id' => $playerId]);
     $playerData = $stmt->fetch(PDO::FETCH_ASSOC);
 
     if (!$playerData) {
-        throw new Exception('Игрок не найден');
+        throw new Exception('Персонаж не найден');
     }
 
     // Проверяем, находится ли игрок в убежище
-    if ($playerData['tile_type'] !== 'vault_ext') {
+    if ($playerData['tile_type'] !== 'vault_ext' && $playerData['tile_type'] !== 'vault') {
         // Игрок уже вышел из убежища
         header('Location: index.php');
         exit;
@@ -47,99 +51,57 @@ try {
         JOIN map_nodes mn ON vk.vault_id = mn.id
         WHERE vk.vault_id = :node_id
     ");
-    $stmt->execute([':node_id' => $playerData['current_node_id']]);
+    $stmt->execute([':node_id' => $playerData['map_node_id']]);
     $keeperData = $stmt->fetch(PDO::FETCH_ASSOC);
 
     // Обработка кнопки "Выйти в Пустошь"
     if (isset($_POST['exit_vault']) && $keeperData) {
         $pdo->beginTransaction();
 
-        // 1. Выдаем снаряжение
+        $characterId = $playerData['id'];
+
+        // 1. Выдаем снаряжение в инвентарь
         $starterItems = [
-            ['name' => 'Комбинезон Убежища', 'type' => 'armor', 'value' => 0, 'weight' => 2, 'description' => 'Сине-желтый комбинезон с номером твоего убежища.', 'armor_class' => 5],
-            ['name' => 'Стимпак', 'type' => 'consumable', 'value' => 25, 'weight' => 0.5, 'description' => 'Восстанавливает здоровье.', 'effect_value' => 30],
-            ['name' => 'Стимпак', 'type' => 'consumable', 'value' => 25, 'weight' => 0.5, 'description' => 'Восстанавливает здоровье.', 'effect_value' => 30],
-            ['name' => 'Стимпак', 'type' => 'consumable', 'value' => 25, 'weight' => 0.5, 'description' => 'Восстанавливает здоровье.', 'effect_value' => 30],
-            ['name' => 'Антирадин', 'type' => 'consumable', 'value' => 15, 'weight' => 0.3, 'description' => 'Снижает уровень радиации.', 'effect_value' => -20],
+            ['name' => 'Комбинезон Убежища', 'type' => 'armor'],
+            ['name' => 'Стимпак', 'type' => 'consumable'],
+            ['name' => 'Стимпак', 'type' => 'consumable'],
+            ['name' => 'Стимпак', 'type' => 'consumable'],
+            ['name' => 'Антирадин', 'type' => 'consumable'],
         ];
 
-        $stmtInsertItem = $pdo->prepare("
-            INSERT INTO player_items (player_id, item_id, quantity)
-            SELECT :player_id, id, :qty FROM items WHERE name = :name
-            ON DUPLICATE KEY UPDATE quantity = quantity + :qty2
-        ");
-
         foreach ($starterItems as $item) {
-            // Проверяем, существует ли предмет в базе items
-            $stmtCheck = $pdo->prepare("SELECT id FROM items WHERE name = :name");
-            $stmtCheck->execute([':name' => $item['name']]);
-            $existingItem = $stmtCheck->fetch(PDO::FETCH_ASSOC);
-
-            if (!$existingItem) {
-                // Создаем предмет
-                $stmtCreate = $pdo->prepare("
-                    INSERT INTO items (name, type, value, weight, description, armor_class, effect_value)
-                    VALUES (:name, :type, :value, :weight, :desc, :ac, :eff)
-                ");
-                $stmtCreate->execute([
-                    ':name' => $item['name'],
-                    ':type' => $item['type'],
-                    ':value' => $item['value'],
-                    ':weight' => $item['weight'],
-                    ':desc' => $item['description'],
-                    ':ac' => $item['armor_class'] ?? null,
-                    ':eff' => $item['effect_value'] ?? null
-                ]);
-                $itemId = $pdo->lastInsertId();
-            } else {
-                $itemId = $existingItem['id'];
-            }
-
+            $stmt = $pdo->prepare("
+                INSERT INTO inventory (character_id, item_type, item_key, quantity)
+                VALUES (?, ?, ?, ?)
+                ON DUPLICATE KEY UPDATE quantity = quantity + VALUES(quantity)
+            ");
             $qty = ($item['name'] === 'Комбинезон Убежища') ? 1 : 
                    (($item['name'] === 'Антирадин') ? 1 : 3);
-            
-            $stmtInsertItem->execute([
-                ':player_id' => $playerId,
-                ':name' => $item['name'],
-                ':qty' => $qty,
-                ':qty2' => $qty
-            ]);
+            $stmt->execute([$characterId, $item['type'], $item['name'], $qty]);
         }
 
-        // 2. Добавляем крышки
-        $stmtCaps = $pdo->prepare("UPDATE players SET caps = caps + :caps WHERE id = :id");
-        $stmtCaps->execute([':caps' => $keeperData['starter_caps'], ':id' => $playerId]);
+        // 2. Добавляем крышки персонажу
+        $starterCaps = $keeperData['starter_caps'] ?? 50;
+        $stmtCaps = $pdo->prepare("UPDATE characters SET caps = caps + ? WHERE id = ?");
+        $stmtCaps->execute([$starterCaps, $characterId]);
 
-        // 3. Применяем бонусы Хранителя (броня + харизма)
-        $stmtStats = $pdo->prepare("
-            UPDATE players 
-            SET base_armor = base_armor + :armor, 
-                charisma = charisma + :cha,
-                current_mission = :mission,
-                last_safe_node_id = :safe_node
-            WHERE id = :id
-        ");
-        $stmtStats->execute([
-            ':armor' => $keeperData['bonus_armor'],
-            ':cha' => $keeperData['bonus_charisma'],
-            ':mission' => $keeperData['mission_text'],
-            ':safe_node' => $playerData['current_node_id'],
-            ':id' => $playerId
-        ]);
+        // 3. Применяем бонусы Хранителя (харизма)
+        $bonusCha = $keeperData['bonus_charisma'] ?? 0;
+        if ($bonusCha > 0) {
+            $stmtStats = $pdo->prepare("UPDATE characters SET charisma = charisma + ? WHERE id = ?");
+            $stmtStats->execute([$bonusCha, $characterId]);
+        }
 
-        // 4. Активируем Пип-бой (флаг)
-        $stmtPipboy = $pdo->prepare("UPDATE players SET pipboy_active = 1 WHERE id = :id");
-        $stmtPipboy->execute([':id' => $playerId]);
-
-        // 5. Записываем лог
+        // 4. Записываем лог
         $stmtLog = $pdo->prepare("
-            INSERT INTO admin_logs (action, details, created_at) 
-            VALUES ('player_exit_vault', :details, NOW())
+            INSERT INTO admin_logs (admin_id, action, table_name, details, ip_address) 
+            VALUES (0, 'player_exit_vault', 'characters', ?, '127.0.0.1')
         ");
-        $stmtLog->execute([':details' => json_encode([
+        $stmtLog->execute([json_encode([
             'player_id' => $playerId,
-            'vault_id' => $playerData['current_node_id'],
-            'keeper_id' => $keeperData['id']
+            'character_id' => $characterId,
+            'vault_id' => $playerData['map_node_id'],
+            'caps_given' => $starterCaps
         ])]);
 
         $pdo->commit();

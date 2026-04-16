@@ -23,7 +23,12 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     } else {
         try {
             $pdo = getDbConnection();
-            $stmt = $pdo->prepare("SELECT id, username, password_hash FROM players WHERE username = ? AND role = 'admin' AND is_active = 1");
+            $stmt = $pdo->prepare("
+                SELECT p.id, p.username, p.password_hash 
+                FROM players p
+                JOIN roles r ON r.id = p.role_id
+                WHERE p.username = ? AND r.role_name = 'admin' AND p.is_active = 1
+            ");
             $stmt->execute([$username]);
             $user = $stmt->fetch();
 

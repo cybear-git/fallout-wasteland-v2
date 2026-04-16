@@ -1,6 +1,6 @@
 CREATE TABLE IF NOT EXISTS characters (
     id INT AUTO_INCREMENT PRIMARY KEY,
-    player_id INT UNIQUE NOT NULL,
+    player_id INT UNSIGNED UNIQUE NOT NULL,
     name VARCHAR(50) NOT NULL,
     gender ENUM('male', 'female') DEFAULT 'male',
     level TINYINT UNSIGNED DEFAULT 1,

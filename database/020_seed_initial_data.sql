@@ -1,25 +1,10 @@
 -- Миграция 020: Начальное наполнение базы данных для тестирования
 -- Включает: админа, стартовые локации, монстров (в т.ч. боссов), предметы, фразы
+-- ИСПРАВЛЕНО: Удалено создание таблицы admins (используем players.role = 'admin')
+-- ИСПРАВЛЕНО: Убраны некорректные ON DUPLICATE KEY UPDATE для разных таблиц
 
--- 1. Создаем таблицу admins, если она не существует (для совместимости)
-CREATE TABLE IF NOT EXISTS admins (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    username VARCHAR(50) UNIQUE NOT NULL,
-    password_hash VARCHAR(255) NOT NULL,
-    email VARCHAR(100) DEFAULT NULL,
-    role VARCHAR(20) DEFAULT 'admin',
-    is_active TINYINT(1) DEFAULT 1,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    last_login TIMESTAMP NULL DEFAULT NULL,
-    INDEX idx_username (username),
-    INDEX idx_active (is_active)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- Создаем администратора (пароль: admin123)
--- Хэш получен через password_hash('admin123', PASSWORD_DEFAULT)
-INSERT INTO admins (username, password_hash, email, role, is_active) VALUES
-('admin', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'admin@vault101.com', 'superadmin', 1)
-ON DUPLICATE KEY UPDATE email = VALUES(email);
+-- 1. ТАБЛИЦА ADMINS УДАЛЕНА - используем players с role='admin'
+-- Админ создается через скрипт scripts/create_admin.php
 
 -- 2. Добавляем недостающие типы локаций в справочник (если их нет)
 INSERT INTO location_types (type_key, type_name, description, base_difficulty) VALUES
@@ -35,57 +20,59 @@ INSERT INTO monsters (monster_key, name, level, speed, status, base_hp, base_arm
 ON DUPLICATE KEY UPDATE name = VALUES(name);
 
 -- 4. Добавляем уникальные предметы для наград
-INSERT INTO loot (item_key, name, description, weight, value, category, stackable, max_stack, is_unique) VALUES
-('vault_101_key', 'Ключ от Убежища 101', 'Старый магнитный ключ. Дверь уже открыта.', 0.1, 0, 'quest', 1, 1, 1),
-('liberty_prime_core', 'Ядро Либерти Прайм', 'Мощный энергетический источник.', 5.0, 5000, 'quest', 1, 1, 1)
+INSERT INTO loot (item_key, name, description, weight, value, category, stackable, max_stack) VALUES
+('vault_101_key', 'Ключ от Убежища 101', 'Старый магнитный ключ. Дверь уже открыта.', 0.1, 0, 'quest', 1, 1),
+('liberty_prime_core', 'Ядро Либерти Прайм', 'Мощный энергетический источник.', 5.0, 5000, 'quest', 1, 1)
 ON DUPLICATE KEY UPDATE name = VALUES(name);
 
 -- 5. Добавляем атмосферные фразы для разных типов локаций (выборка 20 из 100)
-INSERT INTO location_quotes (quote_text, tile_type, mood, source_character, is_spoiler) VALUES
+INSERT INTO location_quotes (quote_text, tile_type, mood, source, is_active) VALUES
 -- Пустошь (wasteland)
-('Война... Война никогда не меняется.', 'wasteland', 'melancholy', 'Narrator', 0),
-('Пустошь учит одному: доверяй только своему оружию.', 'wasteland', 'grim', 'Vault Dweller', 0),
-('Радиация здесь — как ветер. Всегда с тобой.', 'wasteland', 'grim', 'Traveler', 0),
-('Выжил? Значит, ты либо удачлив, либо опасен.', 'wasteland', 'neutral', 'Merchant', 0),
-('Крышки решают всё. Всё остальное — пыль.', 'wasteland', 'pragmatic', 'Trader', 0),
+('Война... Война никогда не меняется.', 'wasteland', 'lore', 'Narrator', 1),
+('Пустошь учит одному: доверяй только своему оружию.', 'wasteland', 'danger', 'Vault Dweller', 1),
+('Радиация здесь — как ветер. Всегда с тобой.', 'wasteland', 'danger', 'Traveler', 1),
+('Выжил? Значит, ты либо удачлив, либо опасен.', 'wasteland', 'neutral', 'Merchant', 1),
+('Крышки решают всё. Всё остальное — пыль.', 'wasteland', 'neutral', 'Trader', 1),
 -- Руины (ruins)
-('Здесь когда-то жили люди. Теперь только эхо.', 'ruins', 'melancholy', 'Explorer', 0),
-('Рейдеры приходят ночью. Молись, чтобы ты спал крепко.', 'ruins', 'dark', 'Survivor', 0),
-('Камень помнит крики. Стены помнят кровь.', 'ruins', 'dark', 'Ghoul', 0),
+('Здесь когда-то жили люди. Теперь только эхо.', 'ruins', 'lore', 'Explorer', 1),
+('Рейдеры приходят ночью. Молись, чтобы ты спал крепко.', 'ruins', 'danger', 'Survivor', 1),
+('Камень помнит крики. Стены помнят кровь.', 'ruins', 'danger', 'Ghoul', 1),
 -- Убежище (vault)
-('Убежище — это не стены. Это люди внутри.', 'vault', 'hopeful', 'Overseer', 0),
-('Дверь закрыта. Но ты ведь нашел выход, да?', 'vault', 'mysterious', 'Vault Dweller', 0),
-('111 дней. Столько длился наш сон.', 'vault', 'melancholy', 'Sole Survivor', 0),
+('Убежище — это не стены. Это люди внутри.', 'vault', 'lore', 'Overseer', 1),
+('Дверь закрыта. Но ты ведь нашел выход, да?', 'vault', 'lore', 'Vault Dweller', 1),
+('111 дней. Столько длился наш сон.', 'vault', 'lore', 'Sole Survivor', 1),
 -- Радиационная зона (radzone)
-('Счетчик щелкает. Значит, ты еще жив.', 'radzone', 'grim', 'Stalker', 0),
-('Зеленое свечение — последний закат этого мира.', 'radzone', 'poetic', 'Hermit', 0),
-('Мутанты молятся на свечение. Я молюсь на стимпак.', 'radzone', 'pragmatic', 'Doctor', 0),
+('Счетчик щелкает. Значит, ты еще жив.', 'radzone', 'danger', 'Stalker', 1),
+('Зеленое свечение — последний закат этого мира.', 'radzone', 'lore', 'Hermit', 1),
+('Мутанты молятся на свечение. Я молюсь на стимпак.', 'radzone', 'neutral', 'Doctor', 1),
 -- Город (city)
-('Capital Wastes помнит величие. И предательство.', 'city', 'epic', 'Elder Lyons', 0),
-('Небоскребы — это надгробия старой цивилизации.', 'city', 'melancholy', 'Scribe', 0),
-('Братство Стали держит этот сектор. Пока что.', 'city', 'proud', 'Paladin', 0),
+('Capital Wastes помнит величие. И предательство.', 'city', 'lore', 'Elder Lyons', 1),
+('Небоскребы — это надгробия старой цивилизации.', 'city', 'lore', 'Scribe', 1),
+('Братство Стали держит этот сектор. Пока что.', 'city', 'neutral', 'Paladin', 1),
 -- Подземелье (dungeon)
-('Глубоко под землей демоны носят человеческие лица.', 'dungeon', 'dark', 'Super Mutant', 0),
-('Каждый шаг в темноте может стать последним.', 'dungeon', 'tense', 'Mercenary', 0),
-('Босс ждет на нижнем уровне. Он всегда ждет.', 'dungeon', 'ominous', 'Survivor', 0),
+('Глубоко под землей демоны носят человеческие лица.', 'dungeon', 'danger', 'Super Mutant', 1),
+('Каждый шаг в темноте может стать последним.', 'dungeon', 'danger', 'Mercenary', 1),
+('Босс ждет на нижнем уровне. Он всегда ждет.', 'dungeon', 'danger', 'Survivor', 1),
 -- Горы (mountain)
-('Горы — это границы мира. Дальше — только смерть.', 'mountain', 'grim', 'Scout', 0),
-('Ветер здесь срезает кожу. Воздух режет легкие.', 'mountain', 'harsh', 'Climber', 0);
+('Горы — это границы мира. Дальше — только смерть.', 'mountain', 'danger', 'Scout', 1),
+('Ветер здесь срезает кожу. Воздух режет легкие.', 'mountain', 'danger', 'Climber', 1)
+ON DUPLICATE KEY UPDATE quote_text = VALUES(quote_text);
 
 -- 6. Создаем первый тестовый данж (для проверки механики)
 -- Сначала убедимся, что есть локация-вход
-INSERT INTO locations (pos_x, pos_y, tile_type, tile_name, description, danger_level, radiation_level, loot_quality, is_vault, is_dungeon, dungeon_size, is_border) VALUES
-(15, 15, 'dungeon_entrance', 'Вход в Бункер Альфа', 'Тяжелая стальная дверь с символом Анклава.', 10, 20, 8, 0, 1, 5, 0)
-ON DUPLICATE KEY UPDATE tile_name = VALUES(tile_name);
+INSERT INTO locations (location_key, name, tile_type, description, danger_level, radiation_level, loot_quality, is_vault, is_dungeon, dungeon_size, is_active) VALUES
+('bunker_alpha_entrance', 'Вход в Бункер Альфа', 'dungeon_entrance', 'Тяжелая стальная дверь с символом Анклава.', 10, 20, 8, 0, 1, 5, 1)
+ON DUPLICATE KEY UPDATE name = VALUES(name);
 
 -- Получаем ID созданной локации и создаем данж
 -- Примечание: В реальном сценарии это делается через админку
 -- Здесь мы используем подстановку для демонстрации
-SET @entrance_loc_id = (SELECT id FROM locations WHERE pos_x = 15 AND pos_y = 15 LIMIT 1);
+SET @entrance_loc_id = (SELECT id FROM locations WHERE location_key = 'bunker_alpha_entrance' LIMIT 1);
 SET @boss_id = (SELECT id FROM monsters WHERE monster_key = 'colonel_mortert' LIMIT 1);
 
 INSERT INTO dungeons (dungeon_key, name, description, min_level, boss_id, reward_xp, reward_caps, is_active) VALUES
-('bunker_alpha', 'Бункер Альфа', 'Заброшенный бункер Анклава с экспериментальным оружием.', 8, @boss_id, 500, 200, 1);
+('bunker_alpha', 'Бункер Альфа', 'Заброшенный бункер Анклава с экспериментальным оружием.', 8, @boss_id, 500, 200, 1)
+ON DUPLICATE KEY UPDATE name = VALUES(name);
 
 -- Создаем ноды для этого данжа (простая линейная структура)
 SET @dungeon_id = (SELECT id FROM dungeons WHERE dungeon_key = 'bunker_alpha' LIMIT 1);
@@ -95,7 +82,8 @@ INSERT INTO dungeon_nodes (dungeon_id, pos_x, pos_y, tile_type, is_entrance) VAL
 (@dungeon_id, 1, 0, 'corridor', 0),
 (@dungeon_id, 2, 0, 'room', 0),
 (@dungeon_id, 3, 0, 'boss', 0),
-(@dungeon_id, 2, 1, 'treasure', 0);
+(@dungeon_id, 2, 1, 'treasure', 0)
+ON DUPLICATE KEY UPDATE tile_type = VALUES(tile_type);
 
 -- 7. Обновляем конфигурацию игры
 INSERT INTO game_settings (setting_key, setting_value, category, description) VALUES
