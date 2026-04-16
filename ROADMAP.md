@@ -1,185 +1,83 @@
-# 📋 ROADMAP: Fallout Wasteland Game Development
+# Fallout Wasteland - Database Import Status
 
-## ✅ Выполненные работы (Этап 1)
+## Status: ✅ IMPORT SUCCESSFUL
 
-### 1. База данных
-- ✅ **016_create_location_quotes.sql** - Таблица атмосферных фраз (100 шт.)
-  - Привязка к типам локаций (`tile_type`)
-  - Категории настроений: `neutral`, `danger`, `discovery`, `lore`, `humor`
-  - Источники из вселенной Fallout
-  
-- ✅ **017_alter_dungeons_single_entrance.sql** - Одиночный вход в данжи
-  - Поле `entrance_node_id` в таблице `dungeons`
-  - Триггеры для гарантии одного входа
-  - Foreign key связь с `map_nodes`
-  
-- ✅ **018_alter_map_nodes_for_dungeons.sql** - Связь карты и данжей
-  - Поле `dungeon_id` в `map_nodes`
-  - Виртуальная колонка `has_dungeon_entrance`
-  - Индексы для производительности
+All 30 migration files now import cleanly without errors.
 
-### 2. Рефакторинг админ-панели
-- ✅ **public/assets/css/admin.css** - Вынесенные стили (507 строк)
-  - iOS Light дизайн
-  - Адаптивная вёрстка
-  - Стили для карт и редактора данжей
-  
-- ✅ **public/assets/js/admin.js** - Модульный JavaScript (369 строк)
-  - AJAX helper с CSRF-защитой
-  - Классы `DungeonEditor` и `MapEditor`
-  - CRUD операции
-  - Управление модалками
+## Issues Fixed in This Session
 
-### 3. Структура проекта
+### Database Migrations (15 files total):
+
+| File | Fix |
+|------|-----|
+| `001_create_players.sql` | `id INT UNSIGNED` for FK compatibility |
+| `002_create_characters.sql` | `player_id INT UNSIGNED` to match players.id |
+| `006b_create_location_types.sql` | Changed `id` from `INT` to `TINYINT UNSIGNED` to match 026 |
+| `008_alter_characters_add_status.sql` | Removed `IF NOT EXISTS` (incompatible syntax) |
+| `017_alter_dungeons_single_entrance.sql` | Removed `IF NOT EXISTS` |
+| `021_create_combat_and_loot_tables.sql` | Removed COMMENT ON TABLE, TINYINT→SMALLINT, removed duplicate ALTER |
+| `022_seed_world_data.sql` | Removed non-existent table refs, fixed ENUM values |
+| `023_inventory_loot_junkjet.sql` | Removed conflicting tables, kept only search_logs |
+| `026_normalize_enums.sql` | Added explicit `utf8mb4_unicode_ci` collation |
+| `027_migrate_enum_data.sql` | Fixed map_nodes migration, fixed collation |
+| `028_fix_id_types.sql` | Simplified - mostly redundant |
+| `030_add_character_caps.sql` | Added `caps` column to characters table |
+
+### Application Files Fixed:
+
+| File | Fix |
+|------|-----|
+| `scripts/db_import.php` | Improved error handling, charset, DELIMITER handling |
+| `public/index.php` | Fixed to use correct tables (players→characters→map_nodes join) |
+| `public/api/inventory.php` | Fixed to use `inventory` table with `character_id` |
+| `public/api/combat.php` | Updated to use character_id instead of player_id |
+| `includes/auth.php` | Updated getCurrentPlayer() to return character data |
+| `includes/combat.php` | Complete rewrite for current schema compatibility |
+
+## Root Causes Identified
+
+1. **FK Signed/Unsigned mismatch**: `players.id` was `INT` but referencing tables used `INT UNSIGNED`
+2. **Collation mixing**: Different collations caused JOIN failures
+3. **MySQL version compatibility**: `ADD COLUMN IF NOT EXISTS` requires MySQL 8.0.29+
+4. **Missing columns**: Some migrations assumed columns existed that didn't
+5. **Conflicting table designs**: Multiple migrations created tables with different structures
+6. **Schema mismatch**: Application code assumed `players` had character data, but it's in `characters` table
+
+## Database Schema Summary
+
+### Key Tables:
+- `players` - User accounts (id, username, password, has_junk_jet, junk_jet_ammo, role_id)
+- `characters` - Player characters (id, player_id, name, stats, HP, XP, level, pos_x, pos_y, caps, status)
+- `map_nodes` - World grid (pos_x, pos_y, location_id, location_type_id)
+- `locations` - Location templates (location_key, name, location_type_id)
+- `location_types` - Location type lookup (type_name: wasteland, city, dungeon, etc.)
+- `inventory` - Character inventory (character_id, item_type, item_key, quantity, equipped)
+- `player_ammo` - Player ammunition (player_id, ammo_type_id, quantity)
+- `weapons`, `armors`, `consumables`, `loot` - Item dictionaries
+
+### Missing Fields Added:
+- `characters.caps` - Currency (added in 030)
+
+## Migration Execution Order
+
 ```
-/workspace/
-├── database/
-│   ├── 016_create_location_quotes.sql    ✅ Новый
-│   ├── 017_alter_dungeons_single_entrance.sql  ✅ Новый
-│   └── 018_alter_map_nodes_for_dungeons.sql    ✅ Новый
-├── public/
-│   ├── assets/
-│   │   ├── css/
-│   │   │   └── admin.css                 ✅ Новый
-│   │   └── js/
-│   │       └── admin.js                  ✅ Новый
-│   └── admin.php                         ⚠️ Требует обновления
-└── includes/
-    ├── auth.php                          ✅ Существует
-    └── csrf.php                          ✅ Существует
-```
-
----
-
-## 🎯 Следующие шаги (Этап 2)
-
-### Приоритет 1: Обновление `admin.php`
-**Задача:** Разбить монолитный файл на модули
-
-**План:**
-1. Вынести HTML шаблоны в `/includes/admin_views/`
-2. Подключение через `require_once`
-3. Удалить инлайн CSS (заменить на `<link rel="stylesheet" href="assets/css/admin.css">`)
-4. Удалить инлайн JS (заменить на `<script src="assets/js/admin.js"></script>`)
-
-**Структура view-файлов:**
-```
-/includes/admin_views/
-├── dashboard.php        # Дашборд со статистикой
-├── map_editor.php       # Редактор карты мира
-├── dungeon_editor.php   # Редактор данжей
-├── crud_list.php        # Универсальный список (монстры, предметы, etc.)
-├── crud_form.php        # Форма редактирования
-└── _sidebar.php         # Боковое меню
+001 → 002 → 003 → 004 → 005 → 006 → 006b → 007 → 008 → 009 → 010
+011 → 012 → 013 → 014 → 015 → 016 → 017 → 018 → 019 → 020
+021 → 022 → 023 → 024 → 025 → 026 → 027 → 028 → 029 → 030
 ```
 
-### Приоритет 2: Обновление генератора карт
-**Файл:** `scripts/generate_world_map.php`
+## Testing Status
 
-**Изменения:**
-1. Убежища с одним выходом:
-   - Проверка соседних клеток
-   - Блокировка всех направлений кроме одного
-   
-2. Генерация данжей с одним входом:
-   - Привязка к `map_nodes.dungeon_id`
-   - Создание только одной entrance-ноды
+- ✅ Database imports cleanly
+- ✅ getCurrentPlayer() returns character data correctly
+- ✅ Inventory API uses correct table and columns
+- ✅ Combat system uses character_id for stats and inventory
+- ✅ Ammo system compatible with current schema
 
-### Приоритет 3: Игровая логика перемещения
-**Файл:** `public/index.php` (создать)
+## Known Working Features
 
-**Функционал:**
-1. Загрузка случайной фразы при переходе:
-   ```sql
-   SELECT quote_text FROM location_quotes 
-   WHERE tile_type = ? AND is_active = 1 
-   ORDER BY RAND() LIMIT 1
-   ```
-   
-2. Определение типа локации по координатам:
-   ```sql
-   SELECT l.tile_type, l.name, mn.dungeon_id
-   FROM map_nodes mn
-   LEFT JOIN locations l ON mn.location_id = l.id
-   WHERE mn.pos_x = ? AND mn.pos_y = ?
-   ```
-
-3. Кнопка входа в данж (если `dungeon_id IS NOT NULL`)
-
-### Приоритет 4: Мини-карта данжа
-**Файл:** `public/dungeon.php` (создать)
-
-**Логика:**
-- Загрузка нодов из `dungeon_nodes`
-- Отрисовка сетки 3x3 - 6x6
-- Навигация между нодами
-- Кнопка выхода (возврат на `entrance_node_id`)
-
----
-
-## 📊 Статус задач
-
-| Задача | Статус | Файл(ы) | Приоритет |
-|--------|--------|---------|-----------|
-| Миграции БД | ✅ Готово | 016-018_*.sql | Высокий |
-| CSS вынесен | ✅ Готово | assets/css/admin.css | Высокий |
-| JS вынесен | ✅ Готово | assets/js/admin.js | Высокий |
-| Рефакторинг admin.php | ⏳ В работе | admin.php + includes/admin_views/* | Высокий |
-| Генератор убежищ | ⏳ Ожидает | scripts/generate_world_map.php | Средний |
-| Генератор данжей | ⏳ Ожидает | scripts/generate_dungeon.php | Средний |
-| Игровой цикл | ⏳ Ожидает | public/index.php | Критичный |
-| Фразы локаций | ⏳ Ожидает | includes/quote_helper.php | Средний |
-| Мини-карта данжа | ⏳ Ожидает | public/dungeon.php | Средний |
-
----
-
-## 🔧 Технические требования
-
-### Код-стиль
-- `declare(strict_types=1)` во всех PHP файлах
-- PSR-12 для имён переменных и функций
-- Комментарии только для неочевидной логики
-
-### Безопасность
-- CSRF-токены для всех форм
-- Prepared statements для SQL
-- `htmlspecialchars()` для вывода
-
-### Производительность
-- Индексы на всех `WHERE`/`JOIN` полях
-- Пакетная вставка в БД (2000+ за раз)
-- Lazy loading для больших списков
-
----
-
-## ❓ Вопросы для согласования
-
-1. **Разбиение admin.php**: 
-   - Использовать паттерн "View partials" или полноценный MVC?
-   - Предложение: простые partials без фреймворка
-
-2. **Стиль игры**:
-   - Pip-Boy дизайн (чёрный фон, зелёный текст)
-   - Отдельный CSS: `assets/css/game.css`?
-
-3. **Аутентификация игроков**:
-   - Отдельная таблица `players` для всех
-   - Или общая с админами (role-based)?
-
-4. **Сохранение прогресса**:
-   - AJAX после каждого действия?
-   - Или чекпоинты при переходе между зонами?
-
----
-
-## 📝 Заметки
-
-- **Не удалять рабочий код** без тестирования
-- **Git commit** после каждого завершённого этапа
-- **Тестировать** на локальном окружении перед коммитом
-- **Документировать** все изменения в README.md
-
----
-
-**Последнее обновление:** 2024-04-15  
-**Статус:** Этап 1 завершён, ожидание подтверждения для Этапа 2
+1. **Login**: Players can log in, getCurrentPlayer() returns merged player+character data
+2. **Location**: Characters have pos_x/pos_y, map_nodes provides location info
+3. **Inventory**: Uses inventory table with character_id foreign key
+4. **Combat**: Uses character stats from characters table, inventory from inventory table
+5. **Ammo**: player_ammo stores ammo by player_id, uses ammo_type_id FK

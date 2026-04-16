@@ -21,114 +21,105 @@ $action = $_POST['action'] ?? $_GET['action'] ?? '';
 try {
     switch ($action) {
         case 'list':
-            // Показать весь инвентарь
             $stmt = $pdo->prepare("
-                SELECT i.*, pi.quantity, pi.equipped, it.name as type_name, it.slug as type_slug
-                FROM player_inventory pi
-                JOIN items i ON i.id = pi.item_id
-                JOIN item_types it ON it.id = i.type_id
-                WHERE pi.player_id = ?
-                ORDER BY it.slug, i.name
+                SELECT inv.id, inv.item_type, inv.item_key, inv.quantity, inv.equipped,
+                       i.name, i.description, i.weight, i.value
+                FROM inventory inv
+                LEFT JOIN items i ON i.name = inv.item_key
+                WHERE inv.character_id = ?
+                ORDER BY inv.item_type, i.name
             ");
-            $stmt->execute([$player['id']]);
+            $stmt->execute([$player['character_id']]);
             $inventory = $stmt->fetchAll(PDO::FETCH_ASSOC);
             
-            // Получаем крышки
-            $caps = $player['caps'];
+            $stmt = $pdo->prepare("SELECT caps FROM characters WHERE id = ?");
+            $stmt->execute([$player['character_id']]);
+            $caps = $stmt->fetchColumn();
             
             echo json_encode([
                 'success' => true,
                 'inventory' => $inventory,
-                'caps' => $caps,
+                'caps' => $caps ?? 0,
                 'has_junk_jet' => (bool)$player['has_junk_jet'],
                 'junk_jet_ammo' => (int)$player['junk_jet_ammo']
             ]);
             break;
 
         case 'use':
-            // Использовать предмет (расходник)
             $itemId = (int)($_POST['item_id'] ?? 0);
             
-            // Проверка наличия
-            $stmt = $pdo->prepare("SELECT quantity, equipped FROM player_inventory WHERE player_id = ? AND item_id = ?");
-            $stmt->execute([$player['id'], $itemId]);
-            $item = $stmt->fetch(PDO::FETCH_ASSOC);
-            
-            if (!$item || $item['quantity'] <= 0) {
-                throw new Exception("Предмет не найден");
-            }
-            
-            // Загрузка данных предмета
             $stmt = $pdo->prepare("SELECT * FROM items WHERE id = ?");
             $stmt->execute([$itemId]);
             $itemData = $stmt->fetch(PDO::FETCH_ASSOC);
             
-            if ($itemData['type_id'] != 3) { // Не расходник
+            if (!$itemData) {
+                throw new Exception("Предмет не найден");
+            }
+            
+            if ($itemData['type_id'] != 3) {
                 throw new Exception("Этот предмет нельзя использовать");
             }
             
             $pdo->beginTransaction();
             
-            // Применение эффекта
             $message = "";
             if ($itemData['effect_stat'] === 'health') {
-                $newHp = min($player['max_hp'], $player['current_hp'] + $itemData['effect_value']);
-                $stmt = $pdo->prepare("UPDATE players SET current_hp = ? WHERE id = ?");
-                $stmt->execute([$newHp, $player['id']]);
+                $newHp = min($player['max_hp'], $player['hp'] + $itemData['effect_value']);
+                $stmt = $pdo->prepare("UPDATE characters SET hp = ? WHERE id = ?");
+                $stmt->execute([$newHp, $player['character_id']]);
                 $message = "Здоровье восстановлено на {$itemData['effect_value']}";
             } elseif ($itemData['effect_stat'] === 'radiation') {
                 $newRad = max(0, $player['radiation'] + $itemData['effect_value']);
-                $stmt = $pdo->prepare("UPDATE players SET radiation = ? WHERE id = ?");
-                $stmt->execute([$newRad, $player['id']]);
+                $stmt = $pdo->prepare("UPDATE characters SET radiation = ? WHERE id = ?");
+                $stmt->execute([$newRad, $player['character_id']]);
                 $message = "Радиация снижена на " . abs($itemData['effect_value']);
             }
-            // TODO: Добавить временные баффы (Психо, Баффбафф) с таймером
             
-            // Удаление предмета
-            $stmt = $pdo->prepare("UPDATE player_inventory SET quantity = quantity - 1 WHERE player_id = ? AND item_id = ?");
-            $stmt->execute([$player['id'], $itemId]);
+            $stmt = $pdo->prepare("
+                UPDATE inventory SET quantity = quantity - 1 
+                WHERE character_id = ? AND item_key = ?
+            ");
+            $stmt->execute([$player['character_id'], $itemData['name']]);
             
-            // Удаление записи если количество 0
-            $stmt = $pdo->prepare("DELETE FROM player_inventory WHERE player_id = ? AND item_id = ? AND quantity <= 0");
-            $stmt->execute([$player['id'], $itemId]);
+            $stmt = $pdo->prepare("
+                DELETE FROM inventory WHERE character_id = ? AND item_key = ? AND quantity <= 0
+            ");
+            $stmt->execute([$player['character_id'], $itemData['name']]);
             
             $pdo->commit();
             
             echo json_encode([
                 'success' => true,
                 'message' => $message,
-                'new_hp' => isset($newHp) ? $newHp : $player['current_hp'],
-                'new_radiation' => isset($newRad) ? $newRad : $player['radiation']
+                'new_hp' => $newHp ?? $player['hp'],
+                'new_radiation' => $newRad ?? $player['radiation']
             ]);
             break;
 
         case 'equip':
-            // Экипировать/снять оружие или броню
             $itemId = (int)($_POST['item_id'] ?? 0);
             
-            $pdo->beginTransaction();
-            
-            // Снять всё текущее этого типа
-            $stmt = $pdo->prepare("SELECT type_id FROM items WHERE id = ?");
+            $stmt = $pdo->prepare("SELECT * FROM items WHERE id = ?");
             $stmt->execute([$itemId]);
-            $type = $stmt->fetch(PDO::FETCH_ASSOC);
+            $itemData = $stmt->fetch(PDO::FETCH_ASSOC);
             
-            if (!in_array($type['type_id'], [1, 2])) {
+            if (!$itemData) {
+                throw new Exception("Предмет не найден");
+            }
+            
+            $typeId = $itemData['type_id'];
+            if (!in_array($typeId, [1, 2])) {
                 throw new Exception("Можно экипировать только оружие и броню");
             }
             
-            // Снять предыдущее
-            $stmt = $pdo->prepare("
-                UPDATE player_inventory 
-                SET equipped = FALSE 
-                WHERE player_id = ? 
-                AND item_id IN (SELECT id FROM items WHERE type_id = ?)
-            ");
-            $stmt->execute([$player['id'], $type['type_id']]);
+            $pdo->beginTransaction();
             
-            // Надеть новое
-            $stmt = $pdo->prepare("UPDATE player_inventory SET equipped = TRUE WHERE player_id = ? AND item_id = ?");
-            $stmt->execute([$player['id'], $itemId]);
+            $stmt = $pdo->prepare("UPDATE inventory SET equipped = FALSE WHERE character_id = ? AND item_type = ?");
+            $typeStr = $typeId == 1 ? 'weapon' : 'armor';
+            $stmt->execute([$player['character_id'], $typeStr]);
+            
+            $stmt = $pdo->prepare("UPDATE inventory SET equipped = TRUE WHERE character_id = ? AND item_key = ?");
+            $stmt->execute([$player['character_id'], $itemData['name']]);
             
             $pdo->commit();
             
@@ -136,29 +127,36 @@ try {
             break;
 
         case 'scrap':
-            // Разобрать предмет на хлам (для хламотрона)
             $itemId = (int)($_POST['item_id'] ?? 0);
             
-            $stmt = $pdo->prepare("
-                DELETE FROM player_inventory 
-                WHERE player_id = ? AND item_id = ? AND quantity > 0
-            ");
-            $stmt->execute([$player['id'], $itemId]);
+            $stmt = $pdo->prepare("SELECT * FROM items WHERE id = ?");
+            $stmt->execute([$itemId]);
+            $itemData = $stmt->fetch(PDO::FETCH_ASSOC);
             
-            // Начисление хлама в хламотрон (если есть)
-            if ($player['has_junk_jet']) {
-                $junkValue = 5; // Упрощенно, можно брать из предмета
+            if ($itemData && $player['has_junk_jet']) {
+                $junkValue = $itemData['junk_value'] ?? 5;
+                
+                $pdo->beginTransaction();
+                $stmt = $pdo->prepare("DELETE FROM inventory WHERE character_id = ? AND item_key = ? LIMIT 1");
+                $stmt->execute([$player['character_id'], $itemData['name']]);
+                
                 $stmt = $pdo->prepare("UPDATE players SET junk_jet_ammo = junk_jet_ammo + ? WHERE id = ?");
-                $stmt->execute([$junkValue, $player['id']]);
+                $stmt->execute([$junkValue, $player['player_id']]);
+                $pdo->commit();
                 
                 echo json_encode([
                     'success' => true,
                     'message' => "Предмет разобран. +{$junkValue} ед. хлама для хламотрона"
                 ]);
             } else {
+                $pdo->beginTransaction();
+                $stmt = $pdo->prepare("DELETE FROM inventory WHERE character_id = ? AND id = ?");
+                $stmt->execute([$player['character_id'], $itemId]);
+                $pdo->commit();
+                
                 echo json_encode([
                     'success' => true,
-                    'message' => "Предмет разобран на запчасти (хламотрон отсутствует)"
+                    'message' => $player['has_junk_jet'] ? "Предмет утилизирован" : "Предмет разобран на запчасти"
                 ]);
             }
             break;

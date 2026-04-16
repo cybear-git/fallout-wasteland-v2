@@ -2,6 +2,7 @@
 /**
  * AUTH_FORM.PHP — Форма входа/регистрации
  */
+require_once __DIR__ . '/csrf.php';
 ?>
 <!DOCTYPE html>
 <html lang="ru">
@@ -140,8 +141,8 @@
                 <div class="auth-tab" onclick="switchTab('register')">📝 Регистрация</div>
             </div>
 
-            <!-- Форма входа -->
             <form method="POST" action="login.php" class="auth-form active" id="login-form">
+                <?= csrfField() ?>
                 <input type="hidden" name="action" value="login">
                 <div class="form-group">
                     <label>Имя пользователя:</label>
@@ -154,8 +155,8 @@
                 <button type="submit" class="btn-submit">Войти в Пустошь</button>
             </form>
 
-            <!-- Форма регистрации -->
             <form method="POST" action="register.php" class="auth-form" id="register-form">
+                <?= csrfField() ?>
                 <input type="hidden" name="action" value="register">
                 <div class="form-group">
                     <label>Придумайте имя:</label>
@@ -176,30 +177,23 @@
 
     <script>
         function switchTab(tabName) {
-            // Переключаем табы
             document.querySelectorAll('.auth-tab').forEach((tab, index) => {
                 tab.classList.toggle('active', (tabName === 'login' && index === 0) || (tabName === 'register' && index === 1));
             });
-            
-            // Переключаем формы
             document.querySelectorAll('.auth-form').forEach(form => {
                 form.classList.remove('active');
             });
             document.getElementById(tabName + '-form').classList.add('active');
         }
 
-        // Валидация паролей при регистрации
         document.getElementById('register-form').addEventListener('submit', function(e) {
             const pwd = this.querySelector('[name="password"]').value;
             const confirm = this.querySelector('[name="password_confirm"]').value;
-            
             if (pwd !== confirm) {
                 e.preventDefault();
                 alert('❌ Пароли не совпадают!');
             }
         });
-
-        console.log('🟢 Терминал авторизации загружен');
     </script>
 </body>
 </html>

@@ -1,31 +1,28 @@
 <?php
-/**
- * INDEX.PHP — Основной игровой интерфейс (Pip-Boy)
- * Движение, поиск, инвентарь, статус персонажа
- */
 declare(strict_types=1);
 session_start();
 require_once __DIR__ . '/../config/database.php';
 
-// Если не авторизован — редирект на форму входа
 if (!isset($_SESSION['player_id'])) {
-    header('Location: includes/auth_form.php');
+    header('Location: login.php');
     exit;
 }
 
 $playerId = $_SESSION['player_id'];
-$message = '';
 $error = '';
 
 try {
-    // Получаем данные игрока
+    $pdo = getDbConnection();
+
     $stmt = $pdo->prepare("
-        SELECT p.*, 
-               mn.x, mn.y, mn.tile_type, mn.id as current_node_id,
-               lt.name as location_name
+        SELECT p.id as player_id, p.username,
+               c.id as character_id, c.name as character_name,
+               c.status, c.level, c.xp, c.hp, c.max_hp, c.radiation,
+               c.strength, c.perception, c.endurance, c.charisma,
+               c.intelligence, c.agility, c.luck, c.caps,
+               c.pos_x, c.pos_y
         FROM players p
-        LEFT JOIN map_nodes mn ON p.current_map_node_id = mn.id
-        LEFT JOIN location_types lt ON lt.id = mn.location_type_id
+        INNER JOIN characters c ON c.player_id = p.id
         WHERE p.id = :id
     ");
     $stmt->execute([':id' => $playerId]);
@@ -33,316 +30,314 @@ try {
 
     if (!$player) {
         session_destroy();
-        header('Location: includes/auth_form.php');
+        header('Location: login.php');
         exit;
     }
 
-    // Проверка состояния шока
-    $isShocked = false;
-    if ($player['shock_until'] && strtotime($player['shock_until']) > time()) {
-        $isShocked = true;
-        $remainingShock = ceil((strtotime($player['shock_until']) - time()) / 60);
-        $message = "⚠️ СОСТОЯНИЕ ШОК! Характеристики снижены. Осталось минут: {$remainingShock}";
-    }
-
-    // Обработка действий (движение)
-    if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$isShocked) {
-        $action = $_POST['action'] ?? '';
-        
-        if ($action === 'move') {
-            $dx = (int)($_POST['dx'] ?? 0);
-            $dy = (int)($_POST['dy'] ?? 0);
-            
-            if ($dx !== 0 || $dy !== 0) {
-                $newX = $player['x'] + $dx;
-                $newY = $player['y'] + $dy;
-                
-                // Проверка границ карты (160x90)
-                if ($newX < 0 || $newX >= 160 || $newY < 0 || $newY >= 90) {
-                    $error = "❌ Дальше идти некуда. Там только смерть.";
-                } else {
-                    // Проверка непроходимых зон
-                    $stmt = $pdo->prepare("
-                        SELECT id, tile_type, is_passable 
-                        FROM map_nodes 
-                        WHERE x = :x AND y = :y
-                    ");
-                    $stmt->execute([':x' => $newX, ':y' => $newY]);
-                    $targetNode = $stmt->fetch(PDO::FETCH_ASSOC);
-                    
-                    if (!$targetNode) {
-                        $error = "❌ Локация не найдена.";
-                    } elseif ($targetNode['tile_type'] === 'mountain' || 
-                              $targetNode['tile_type'] === 'military_base' ||
-                              $targetNode['is_passable'] == 0) {
-                        $error = "❌ Проход заблокирован. Нужно свернуть.";
-                    } else {
-                        // Перемещение
-                        $stmt = $pdo->prepare("
-                            UPDATE players 
-                            SET current_map_node_id = :node_id,
-                                last_move_at = NOW(),
-                                inactivity_count = 0
-                            WHERE id = :id
-                        ");
-                        $stmt->execute([
-                            ':node_id' => $targetNode['id'],
-                            ':id' => $playerId
-                        ]);
-                        
-                        // Получение фразы
-                        $stmt = $pdo->prepare("
-                            SELECT text FROM location_quotes 
-                            WHERE location_type = :type OR location_type IS NULL
-                            ORDER BY RAND() LIMIT 1
-                        ");
-                        $stmt->execute([':type' => $targetNode['tile_type']]);
-                        $quoteRow = $stmt->fetch(PDO::FETCH_ASSOC);
-                        $message = "👣 Вы переместились. " . ($quoteRow['text'] ?? '');
-                        
-                        // Обновление данных игрока
-                        $player['x'] = $newX;
-                        $player['y'] = $newY;
-                        $player['current_node_id'] = $targetNode['id'];
-                        $player['tile_type'] = $targetNode['tile_type'];
-                    }
-                }
-            }
-        }
-    }
-
-    // Проверка nearby игроков (радиус 2 клетки)
-    $stmt = $pdo->prepare("
-        SELECT p.username, p.level, mn.x, mn.y,
-               SQRT(POW(mn.x - :x, 2) + POW(mn.y - :y, 2)) as distance
-        FROM players p
-        JOIN map_nodes mn ON p.current_map_node_id = mn.id
-        WHERE p.id != :id
-          AND p.is_online = 1
-          AND p.shock_until IS NULL
-          AND ABS(mn.x - :x) <= 2
-          AND ABS(mn.y - :y) <= 2
-        ORDER BY distance
-        LIMIT 5
+    $stmtLoc = $pdo->prepare("
+        SELECT mn.id, l.location_key, lt.type_key, lt.type_name,
+               l.danger_level, l.radiation_level, l.loot_quality
+        FROM map_nodes mn
+        LEFT JOIN locations l ON l.id = mn.location_id
+        LEFT JOIN location_types lt ON lt.id = mn.location_type_id
+        WHERE mn.pos_x = :x AND mn.pos_y = :y
+        LIMIT 1
     ");
-    $stmt->execute([
-        ':x' => $player['x'],
-        ':y' => $player['y'],
-        ':id' => $playerId
-    ]);
-    $nearbyPlayers = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    $stmtLoc->execute([':x' => $player['pos_x'], ':y' => $player['pos_y']]);
+    $node = $stmtLoc->fetch();
 
-} catch (Exception $e) {
-    $error = "Ошибка: " . $e->getMessage();
+} catch (PDOException $e) {
+    error_log("index.php PDO error: " . $e->getMessage());
+    $error = "Ошибка базы данных.";
+    $player = ['username' => 'Unknown', 'level' => 1, 'hp' => 0, 'max_hp' => 100,
+               'caps' => 0, 'strength' => 1, 'perception' => 1, 'endurance' => 1,
+               'charisma' => 1, 'intelligence' => 1, 'agility' => 1, 'luck' => 1,
+               'pos_x' => 0, 'pos_y' => 0, 'radiation' => 0];
+    $node = null;
 }
 ?>
 <!DOCTYPE html>
 <html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pip-Boy 3000 | Fallout Wasteland</title>
-    <link rel="stylesheet" href="/assets/css/game.css">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+    <title>PIP-BOY 3000 | Fallout Wasteland</title>
+    <link rel="stylesheet" href="/assets/css/pipboy.css">
 </head>
-<body class="pipboy-interface">
-    <div class="crt-overlay"></div>
-    
+<body class="pipboy-body">
     <div class="pipboy-container">
-        <!-- ВЕРХНЯЯ ПАНЕЛЬ: СТАТУС -->
+        <!-- ВЕРХНИЙ БАР -->
         <header class="pipboy-header">
-            <div class="header-left">
-                <h1>📟 Pip-Boy 3000</h1>
-                <span class="location-badge">
-                    📍 <?= htmlspecialchars($player['location_name'] ?? 'Неизвестно') ?>
-                </span>
+            <div class="header-section">
+                <span class="pipboy-logo">📟 PIP-BOY 3000</span>
+                <span class="player-name"><?= htmlspecialchars($player['username'] ?? '???') ?></span>
             </div>
-            <div class="header-right">
-                <span class="player-name"><?= htmlspecialchars($player['username']) ?></span>
-                <span class="player-level">LVL <?= $player['level'] ?></span>
-                <a href="/logout.php" class="btn-logout">🚪 ВЫХОД</a>
+            <div class="header-section">
+                <div class="stat-item">
+                    <span class="stat-label">LVL</span>
+                    <span class="stat-value"><?= (int)($player['level'] ?? 1) ?></span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">💰</span>
+                    <span class="stat-value"><?= (int)($player['caps'] ?? 0) ?></span>
+                </div>
             </div>
         </header>
 
-        <!-- СООБЩЕНИЯ -->
-        <?php if ($message): ?>
-            <div class="message-box info"><?= htmlspecialchars($message) ?></div>
-        <?php endif; ?>
-        <?php if ($error): ?>
-            <div class="message-box error"><?= htmlspecialchars($error) ?></div>
-        <?php endif; ?>
-        <?php if ($isShocked): ?>
-            <div class="message-box shock">⚠️ ШОК: <?= $remainingShock ?> мин</div>
-        <?php endif; ?>
+        <!-- ОСНОВНОЙ ЭКРАН -->
+        <main class="pipboy-main">
+            <!-- ЛЕВАЯ ПАНЕЛЬ - НАВИГАЦИЯ -->
+            <nav class="pipboy-nav">
+                <button class="nav-btn" onclick="showPanel('status')" id="btn-status">
+                    📊
+                </button>
+                <button class="nav-btn" onclick="showPanel('special')" id="btn-special">
+                    🎯
+                </button>
+                <button class="nav-btn" onclick="showPanel('inventory')" id="btn-inventory">
+                    🎒
+                </button>
+                <button class="nav-btn" onclick="showPanel('equip')" id="btn-equip">
+                    ⚔️
+                </button>
+                <button class="nav-btn" onclick="showPanel('map')" id="btn-map">
+                    🗺️
+                </button>
+                <button class="nav-btn" onclick="showPanel('history')" id="btn-history">
+                    📜
+                </button>
+            </nav>
 
-        <div class="pipboy-content">
-            <!-- ЛЕВАЯ КОЛОНКА: СТАТЫ И ИНФО -->
-            <aside class="sidebar">
-                <div class="stat-block">
-                    <h3>❤️ ЗДОРОВЬЕ</h3>
-                    <div class="stat-bar">
-                        <div class="stat-fill hp" style="width: <?= ($player['current_hp'] / $player['max_hp']) * 100 ?>%"></div>
-                        <span><?= $player['current_hp'] ?> / <?= $player['max_hp'] ?></span>
-                    </div>
-                </div>
-
-                <div class="stat-block">
-                    <h3>☢️ РАДИАЦИЯ</h3>
-                    <div class="stat-bar">
-                        <div class="stat-fill rad" style="width: <?= min(100, $player['radiation']) ?>%"></div>
-                        <span><?= $player['radiation'] ?> / 1000</span>
-                    </div>
-                </div>
-
-                <div class="stat-block">
-                    <h3>💰 КРЫШКИ</h3>
-                    <p class="stat-value"><?= $player['caps'] ?></p>
-                </div>
-
-                <div class="stat-block">
-                    <h3>🎒 XP</h3>
-                    <p class="stat-value"><?= $player['xp'] ?> / <?= $player['next_level_xp'] ?></p>
-                </div>
-
-                <div class="stats-grid">
-                    <div class="mini-stat">
-                        <span class="label">STR</span>
-                        <span class="value"><?= $player['strength'] ?></span>
-                    </div>
-                    <div class="mini-stat">
-                        <span class="label">PER</span>
-                        <span class="value"><?= $player['perception'] ?></span>
-                    </div>
-                    <div class="mini-stat">
-                        <span class="label">END</span>
-                        <span class="value"><?= $player['endurance'] ?></span>
-                    </div>
-                    <div class="mini-stat">
-                        <span class="label">CHR</span>
-                        <span class="value"><?= $player['charisma'] ?></span>
-                    </div>
-                    <div class="mini-stat">
-                        <span class="label">INT</span>
-                        <span class="value"><?= $player['intelligence'] ?></span>
-                    </div>
-                    <div class="mini-stat">
-                        <span class="label">AGI</span>
-                        <span class="value"><?= $player['agility'] ?></span>
-                    </div>
-                    <div class="mini-stat">
-                        <span class="label">LCK</span>
-                        <span class="value"><?= $player['luck'] ?></span>
-                    </div>
-                </div>
-
-                <!-- ХЛАМОТРОН -->
-                <div class="stat-block junk-jet-status">
-                    <h3>🔫 ХЛАМОТРОН</h3>
-                    <p>
-                        <?php if ($player['has_junk_jet']): ?>
-                            ✅ Есть | Хлам: <strong><?= $player['junk_jet_ammo'] ?></strong>
-                        <?php else: ?>
-                            ❌ Нет в наличии
-                        <?php endif; ?>
-                    </p>
-                </div>
-            </aside>
-
-            <!-- ЦЕНТРАЛЬНАЯ ЧАСТЬ: КАРТА И ДЕЙСТВИЯ -->
-            <main class="main-view">
-                <!-- КАРТА/КОМПАС -->
-                <section class="compass-section">
-                    <div class="coordinates">
-                        X: <strong><?= $player['x'] ?></strong> | 
-                        Y: <strong><?= $player['y'] ?></strong>
-                    </div>
-                    
-                    <div class="terrain-info">
-                        <strong>Местность:</strong> <?= htmlspecialchars($player['tile_type'] ?? 'Пустошь') ?>
-                    </div>
-
-                    <!-- НАВИГАЦИЯ -->
-                    <?php if (!$isShocked): ?>
-                    <form method="POST" class="movement-grid">
-                        <input type="hidden" name="action" value="move">
-                        
-                        <button type="submit" name="dx" value="0" data-dy="-1" class="btn-move">⬆️ С</button>
-                        
-                        <div class="move-row">
-                            <button type="submit" name="dx" value="-1" data-dy="-1" class="btn-move">↖️ СВ</button>
-                            <button type="submit" name="dx" value="1" data-dy="-1" class="btn-move">↗️ СЗ</button>
+            <!-- ЦЕНТРАЛЬНАЯ ОБЛАСТЬ -->
+            <div class="pipboy-center">
+                <!-- ПАНЕЛИ КОНТЕНТА -->
+                <div class="panel-content" id="panel-status">
+                    <h2 class="panel-title">📊 СТАТУС</h2>
+                    <div class="stats-grid">
+                        <div class="stat-block">
+                            <span class="stat-name">S</span>
+                            <span class="stat-num"><?= (int)($player['strength'] ?? 0) ?></span>
                         </div>
-                        
-                        <div class="move-row">
-                            <button type="submit" name="dx" value="-1" data-dy="0" class="btn-move">⬅️ З</button>
-                            <button type="submit" name="dx" value="1" data-dy="0" class="btn-move">➡️ В</button>
+                        <div class="stat-block">
+                            <span class="stat-name">P</span>
+                            <span class="stat-num"><?= (int)($player['perception'] ?? 0) ?></span>
                         </div>
-                        
-                        <div class="move-row">
-                            <button type="submit" name="dx" value="-1" data-dy="1" class="btn-move">↙️ ЮЗ</button>
-                            <button type="submit" name="dx" value="1" data-dy="1" class="btn-move">↘️ ЮВ</button>
+                        <div class="stat-block">
+                            <span class="stat-name">E</span>
+                            <span class="stat-num"><?= (int)($player['endurance'] ?? 0) ?></span>
                         </div>
-                        
-                        <button type="submit" name="dx" value="0" data-dy="1" class="btn-move">⬇️ Ю</button>
-                    </form>
-                    <?php else: ?>
-                    <div class="movement-disabled">
-                        ⚠️ Движение заблокировано из-за шока
+                        <div class="stat-block">
+                            <span class="stat-name">C</span>
+                            <span class="stat-num"><?= (int)($player['charisma'] ?? 0) ?></span>
+                        </div>
+                        <div class="stat-block">
+                            <span class="stat-name">I</span>
+                            <span class="stat-num"><?= (int)($player['intelligence'] ?? 0) ?></span>
+                        </div>
+                        <div class="stat-block">
+                            <span class="stat-name">A</span>
+                            <span class="stat-num"><?= (int)($player['agility'] ?? 0) ?></span>
+                        </div>
+                        <div class="stat-block">
+                            <span class="stat-name">L</span>
+                            <span class="stat-num"><?= (int)($player['luck'] ?? 0) ?></span>
+                        </div>
+                        <div class="stat-block highlight">
+                            <span class="stat-name">XP</span>
+                            <span class="stat-num"><?= (int)($player['xp'] ?? 0) ?></span>
+                        </div>
                     </div>
-                    <?php endif; ?>
-                </section>
-
-                <!-- ДЕЙСТВИЯ -->
-                <section class="actions-section">
-                    <h3>⚡ ДЕЙСТВИЯ</h3>
-                    <div class="actions-grid">
-                        <button onclick="performSearch()" class="btn-action">🔍 ИСКАТЬ</button>
-                        <button onclick="showInventory()" class="btn-action">🎒 ИНВЕНТАРЬ</button>
-                        <button class="btn-action" disabled>⚔️ БОЙ</button>
-                        <button class="btn-action" disabled>💊 ХИМИЯ</button>
-                    </div>
-                </section>
-
-                <!-- NEARBY PLAYERS -->
-                <?php if (!empty($nearbyPlayers)): ?>
-                <section class="nearby-section">
-                    <h3>👀 ЗАМЕЧЕНЫ СУЩНОСТИ</h3>
-                    <ul class="nearby-list">
-                        <?php foreach ($nearbyPlayers as $nearby): ?>
-                            <li>
-                                👤 <?= htmlspecialchars($nearby['username']) ?> 
-                                (LVL <?= $nearby['level'] ?>) — 
-                                <em>на расстоянии <?= round($nearby['distance'], 1) ?> кл.</em>
-                            </li>
-                        <?php endforeach; ?>
-                    </ul>
-                </section>
-                <?php endif; ?>
-            </main>
-
-            <!-- ПРАВАЯ КОЛОНКА: ЛОГ -->
-            <aside class="log-panel">
-                <h3>📜 ЖУРНАЛ</h3>
-                <div class="log-entries" id="gameLog">
-                    <div class="log-entry">
-                        <small>[<?= date('H:i') ?>]</small>
-                        Добро пожаловать в Пустошь, Странник.
+                    <div class="location-info">
+                        <div class="location-name" id="loc-name"><?= htmlspecialchars($node['type_name'] ?? 'Пустошь') ?></div>
+                        <div class="location-coords">(<?= (int)($player['pos_x'] ?? 0) ?>, <?= (int)($player['pos_y'] ?? 0) ?>)</div>
                     </div>
                 </div>
-            </aside>
+
+                <div class="panel-content hidden" id="panel-special">
+                    <h2 class="panel-title">🎯 S.P.E.C.I.A.L.</h2>
+                    <div class="special-list">
+                        <div class="special-item"><span>S</span> Сила: <strong><?= (int)($player['strength'] ?? 0) ?></strong> — Грубая сила, переносимый вес</div>
+                        <div class="special-item"><span>P</span> Восприятие: <strong><?= (int)($player['perception'] ?? 0) ?></strong> — Поиск, меткость</div>
+                        <div class="special-item"><span>E</span> Выносливость: <strong><?= (int)($player['endurance'] ?? 0) ?></strong> — HP, сопротивление</div>
+                        <div class="special-item"><span>C</span> Харизма: <strong><?= (int)($player['charisma'] ?? 0) ?></strong> — Торговля, диалоги</div>
+                        <div class="special-item"><span>I</span> Интеллект: <strong><?= (int)($player['intelligence'] ?? 0) ?></strong> — Очки опыта, ремонт</div>
+                        <div class="special-item"><span>A</span> Ловкость: <strong><?= (int)($player['agility'] ?? 0) ?></strong> — Очки действий, скрытность</div>
+                        <div class="special-item"><span>L</span> Удача: <strong><?= (int)($player['luck'] ?? 0) ?></strong> — Шанс крита, находки</div>
+                    </div>
+                </div>
+
+                <div class="panel-content hidden" id="panel-inventory">
+                    <h2 class="panel-title">🎒 ИНВЕНТАРЬ</h2>
+                    <div class="inventory-list" id="inventory-list">
+                        <div class="loading">Загрузка...</div>
+                    </div>
+                </div>
+
+                <div class="panel-content hidden" id="panel-equip">
+                    <h2 class="panel-title">⚔️ ЭКИПИРОВКА</h2>
+                    <div class="equip-slots">
+                        <div class="equip-slot">
+                            <span class="slot-name">🗡️ Оружие</span>
+                            <span class="slot-item" id="equip-weapon">—</span>
+                        </div>
+                        <div class="equip-slot">
+                            <span class="slot-name">🛡️ Броня</span>
+                            <span class="slot-item" id="equip-armor">—</span>
+                        </div>
+                        <div class="equip-slot">
+                            <span class="slot-name">💊 Снадобья</span>
+                            <span class="slot-item" id="equip-consumable">—</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="panel-content hidden" id="panel-map">
+                    <h2 class="panel-title">🗺️ КАРТА</h2>
+                    <div class="map-grid" id="map-grid">
+                        <!-- 9x9 grid will be generated here -->
+                    </div>
+                    <div class="map-legend">
+                        <span class="legend-item">🧭 = Вы</span>
+                        <span class="legend-item">💀 = Монстр</span>
+                        <span class="legend-item">📦 = Лут</span>
+                        <span class="legend-item">☢️ = Радиация</span>
+                    </div>
+                </div>
+
+                <div class="panel-content hidden" id="panel-history">
+                    <h2 class="panel-title">📜 ЖУРНАЛ</h2>
+                    <div class="history-log" id="history-log">
+                        <div class="log-entry">
+                            <small>[<?= date('H:i') ?>]</small> Добро пожаловать в Пустошь, Избранный.
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- ПРАВАЯ ПАНЕЛЬ - КРОССОВИДНОЕ УПРАВЛЕНИЕ -->
+            <div class="pipboy-controls">
+                <div class="crosshair">
+                    <button class="cross-btn up" onclick="move(0, -1)">▲</button>
+                    <div class="cross-row">
+                        <button class="cross-btn left" onclick="move(-1, 0)">◄</button>
+                        <button class="cross-btn center" onclick="performSearch()" title="Искать">🔍</button>
+                        <button class="cross-btn right" onclick="move(1, 0)">►</button>
+                    </div>
+                    <button class="cross-btn down" onclick="move(0, 1)">▼</button>
+                </div>
+            </div>
+        </main>
+
+        <!-- НИЖНИЙ БАР СОСТОЯНИЯ -->
+        <footer class="pipboy-statusbar">
+            <div class="hp-container">
+                <span class="bar-label">HP</span>
+                <div class="hp-bar">
+                    <div class="hp-fill" id="hp-fill" style="width: <?= max(0, min(100, (($player['hp'] ?? 0) / max(1, ($player['max_hp'] ?? 100))) * 100)) ?>%"></div>
+                </div>
+                <span class="bar-value"><?= (int)($player['hp'] ?? 0) ?>/<?= (int)($player['max_hp'] ?? 100) ?></span>
+            </div>
+            <div class="radiation-container">
+                <span class="bar-label">☢️ RAD</span>
+                <div class="rad-bar">
+                    <div class="rad-fill" id="rad-fill" style="width: <?= max(0, min(100, ($player['radiation'] ?? 0))) ?>%"></div>
+                </div>
+                <span class="bar-value"><?= (int)($player['radiation'] ?? 0) ?></span>
+            </div>
+            <div class="caps-display">
+                💰 <?= (int)($player['caps'] ?? 0) ?>
+            </div>
+        </footer>
+    </div>
+
+    <!-- МОДАЛЬНОЕ ОКНО БОЯ -->
+    <div id="combat-modal" class="modal hidden">
+        <div class="combat-container">
+            <div class="combat-header">
+                <h2>⚔️ БОЙ</h2>
+                <span id="combat-monster-name">Враг</span>
+            </div>
+            <div class="combat-area">
+                <div class="combat-monster">
+                    <div class="monster-sprite" id="monster-sprite">
+                        <svg viewBox="0 0 100 100" class="monster-svg">
+                            <text x="50" y="50" text-anchor="middle" dominant-baseline="middle" font-size="40">👹</text>
+                        </svg>
+                    </div>
+                    <div class="monster-hp-bar">
+                        <div class="monster-hp-fill" id="monster-hp-fill" style="width: 100%"></div>
+                    </div>
+                    <span class="monster-hp-text" id="monster-hp-text">100/100</span>
+                </div>
+                <div class="combat-log" id="combat-log">
+                    <div class="combat-log-entry">Бой начался!</div>
+                </div>
+            </div>
+            <div class="combat-actions">
+                <button class="combat-btn attack" onclick="attackMonster()">💥 АТАКА</button>
+                <button class="combat-btn flee" onclick="fleeCombat()">🏃 БЕЖАТЬ</button>
+            </div>
         </div>
     </div>
 
-    <!-- МОДАЛЬНОЕ ОКНО ИНВЕНТАРЯ -->
-    <div id="inventoryModal" class="modal" style="display:none;">
-        <div class="modal-content">
-            <span class="close" onclick="closeInventory()">&times;</span>
-            <h2>🎒 ИНВЕНТАРЬ</h2>
-            <div id="inventoryContent">Загрузка...</div>
+    <!-- МОДАЛЬНОЕ ОКНО НАХОДКИ -->
+    <div id="found-modal" class="modal hidden">
+        <div class="found-container">
+            <h2 id="found-title">📦 Находка!</h2>
+            <p id="found-message"></p>
+            <button class="modal-close" onclick="closeFoundModal()">ЗАКРЫТЬ</button>
         </div>
     </div>
 
     <script>
-        // Функция поиска
+        let currentPanel = 'status';
+        let currentCombatId = null;
+        let posX = <?= (int)($player['pos_x'] ?? 0) ?>;
+        let posY = <?= (int)($player['pos_y'] ?? 0) ?>;
+        let playerHP = <?= (int)($player['hp'] ?? 0) ?>;
+        let playerMaxHP = <?= (int)($player['max_hp'] ?? 100) ?>;
+
+        function showPanel(name) {
+            document.querySelectorAll('.panel-content').forEach(p => p.classList.add('hidden'));
+            document.getElementById('panel-' + name).classList.remove('hidden');
+            currentPanel = name;
+
+            if (name === 'inventory') loadInventory();
+            if (name === 'map') loadMap();
+        }
+
+        function move(dx, dy) {
+            fetch('/api/move.php', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ dx, dy })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    posX = data.player.pos_x;
+                    posY = data.player.pos_y;
+                    playerHP = data.player.hp || playerHP;
+                    playerMaxHP = data.player.max_hp || playerMaxHP;
+                    updateLocation(data.player);
+                    addLog(data.message);
+                    if (data.quote) addLog('<i>' + data.quote + '</i>');
+                    if (data.monster_encounter) startCombat(data.monster_encounter);
+                } else {
+                    showAlert(data.error || 'Ошибка');
+                }
+            })
+            .catch(e => showAlert('Ошибка сети'));
+        }
+
+        function updateLocation(player) {
+            document.getElementById('loc-name').textContent = player.location_name || 'Пустошь';
+            document.querySelector('.location-coords').textContent = `(${player.pos_x}, ${player.pos_y})`;
+            const hpPct = Math.max(0, Math.min(100, (playerHP / playerMaxHP) * 100));
+            document.getElementById('hp-fill').style.width = hpPct + '%';
+            document.querySelector('.bar-value').textContent = `${playerHP}/${playerMaxHP}`;
+        }
+
         function performSearch() {
             fetch('/api/search.php', {
                 method: 'POST',
@@ -351,67 +346,168 @@ try {
             .then(r => r.json())
             .then(data => {
                 if (data.success) {
-                    logMessage(data.message);
-                    if (data.quote) logMessage('📝 "' + data.quote + '"');
-                    if (data.found_item) {
-                        logMessage('✅ Найдено: ' + data.found_item.name + ' x' + data.found_item.quantity);
-                    }
-                    if (data.monster_encounter) {
-                        logMessage('⚠️ ВНИМАНИЕ: Враг рядом!');
-                    }
-                    location.reload();
+                    addLog(data.message || 'Ничего не найдено');
+                    if (data.quote) addLog('<i>' + data.quote + '</i>');
+                    if (data.found_item) showFound(data.found_item);
+                    if (data.monster_encounter) startCombat(data.monster_encounter);
+                    if (data.xp_gained) addLog('+' + data.xp_gained + ' XP');
                 } else {
-                    alert('Ошибка: ' + data.error);
+                    showAlert(data.error || 'Ошибка поиска');
                 }
             })
-            .catch(e => alert('Ошибка сети: ' + e));
+            .catch(e => showAlert('Ошибка сети'));
         }
 
-        // Показать инвентарь
-        function showInventory() {
-            document.getElementById('inventoryModal').style.display = 'block';
+        function loadInventory() {
             fetch('/api/inventory.php?action=list')
                 .then(r => r.json())
                 .then(data => {
-                    const div = document.getElementById('inventoryContent');
-                    if (data.success && data.inventory.length > 0) {
-                        let html = '<ul>';
+                    const div = document.getElementById('inventory-list');
+                    if (data.success && data.inventory && data.inventory.length > 0) {
+                        let html = '<ul class="inv-items">';
                         data.inventory.forEach(item => {
-                            html += '<li>' + item.name + ' x' + item.quantity;
-                            if (item.equipped) html += ' [ЭКИП]';
-                            html += '</li>';
+                            html += `<li class="inv-item">${item.name || item.item_key} <span class="inv-qty">x${item.quantity}</span></li>`;
                         });
                         html += '</ul>';
-                        html += '<p>💰 Крышки: ' + data.caps + '</p>';
-                        if (data.has_junk_jet) {
-                            html += '<p>🔫 Хламотрон: хлам=' + data.junk_jet_ammo + '</p>';
-                        }
                         div.innerHTML = html;
                     } else {
-                        div.innerHTML = '<p>Инвентарь пуст.</p>';
+                        div.innerHTML = '<p class="empty">Инвентарь пуст</p>';
                     }
                 });
         }
 
-        function closeInventory() {
-            document.getElementById('inventoryModal').style.display = 'none';
+        function loadMap() {
+            fetch(`/api/map.php?x=${posX}&y=${posY}`)
+                .then(r => r.json())
+                .then(data => {
+                    const grid = document.getElementById('map-grid');
+                    if (data.nodes) {
+                        let html = '';
+                        for (let y = 4; y >= -4; y--) {
+                            for (let x = -4; x <= 4; x++) {
+                                const node = data.nodes.find(n => n.dx === x && n.dy === y);
+                                const isPlayer = x === 0 && y === 0;
+                                const cls = isPlayer ? 'cell-player' : (node ? 'cell-' + (node.type_key || 'wasteland') : 'cell-empty');
+                                const icon = isPlayer ? '🧭' : (node ? getNodeIcon(node) : '+');
+                                html += `<div class="map-cell ${cls}" title="${node ? (node.type_name || 'Пустошь') : 'Неизвестно'}">${icon}</div>`;
+                            }
+                        }
+                        grid.innerHTML = html;
+                    }
+                })
+                .catch(() => { grid.innerHTML = '<p>Ошибка загрузки карты</p>'; });
         }
 
-        function logMessage(msg) {
-            const log = document.getElementById('gameLog');
+        function getNodeIcon(node) {
+            if (node.rad_level > 20) return '☢️';
+            if (node.danger_level > 3) return '💀';
+            if (node.is_vault) return '🏠';
+            if (node.is_dungeon) return '⚔️';
+            return '·';
+        }
+
+        function startCombat(monster) {
+            currentCombatId = null;
+            document.getElementById('combat-monster-name').textContent = monster.name || 'Враг';
+            document.getElementById('monster-hp-text').textContent = `${monster.hp}/${monster.max_hp}`;
+            document.getElementById('monster-hp-fill').style.width = '100%';
+            document.getElementById('combat-log').innerHTML = '<div class="combat-log-entry">⚔️ ' + (monster.name || 'Враг') + ' появился!</div>';
+            document.getElementById('combat-modal').classList.remove('hidden');
+
+            fetch('/api/combat.php', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ action: 'start', monster_id: monster.id, location_id: 0 })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) currentCombatId = data.combat_id;
+            });
+        }
+
+        function attackMonster() {
+            if (!currentCombatId) return;
+            fetch('/api/combat.php', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ action: 'attack', combat_id: currentCombatId, target_index: 0 })
+            })
+            .then(r => r.json())
+            .then(data => {
+                const log = document.getElementById('combat-log');
+                log.innerHTML += '<div class="combat-log-entry">' + (data.message || '') + '</div>';
+                log.scrollTop = log.scrollHeight;
+
+                if (data.enemy_hp !== undefined) {
+                    const pct = Math.max(0, (data.enemy_hp / data.enemy_max_hp) * 100);
+                    document.getElementById('monster-hp-fill').style.width = pct + '%';
+                    document.getElementById('monster-hp-text').textContent = `${data.enemy_hp}/${data.enemy_max_hp}`;
+                }
+
+                if (data.killed) {
+                    log.innerHTML += '<div class="combat-log-entry victory">🏆 Победа! ' + (data.xp_gained || 0) + ' XP</div>';
+                    addLog('🏆 Победа над врагом! +' + (data.xp_gained || 0) + ' XP');
+                    setTimeout(() => closeCombat(), 2000);
+                } else if (data.enemy_response) {
+                    log.innerHTML += '<div class="combat-log-entry damage">' + (data.enemy_response.message || '') + '</div>';
+                    if (data.enemy_response.player_dead) {
+                        log.innerHTML += '<div class="combat-log-entry death">💀 Поражение...</div>';
+                        addLog('💀 Вы погибли...');
+                        setTimeout(() => location.reload(), 3000);
+                    }
+                }
+            });
+        }
+
+        function fleeCombat() {
+            if (!currentCombatId) return;
+            fetch('/api/combat.php', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ action: 'flee', combat_id: currentCombatId })
+            })
+            .then(r => r.json())
+            .then(data => {
+                const log = document.getElementById('combat-log');
+                if (data.escaped) {
+                    log.innerHTML += '<div class="combat-log-entry">🏃 Вы сбежали!</div>';
+                    addLog('🏃 Вы сбежали от врага');
+                    setTimeout(() => closeCombat(), 1000);
+                } else {
+                    log.innerHTML += '<div class="combat-log-entry">' + (data.message || 'Не удалось сбежать!') + '</div>';
+                }
+            });
+        }
+
+        function closeCombat() {
+            document.getElementById('combat-modal').classList.add('hidden');
+            currentCombatId = null;
+        }
+
+        function showFound(item) {
+            document.getElementById('found-title').textContent = '📦 ' + item.name;
+            document.getElementById('found-message').textContent = 'Найдено: ' + item.name + ' x' + item.quantity;
+            document.getElementById('found-modal').classList.remove('hidden');
+        }
+
+        function closeFoundModal() {
+            document.getElementById('found-modal').classList.add('hidden');
+        }
+
+        function addLog(msg) {
+            const log = document.getElementById('history-log');
+            if (!log) return;
             const entry = document.createElement('div');
             entry.className = 'log-entry';
-            entry.innerHTML = '<small>[' + new Date().toLocaleTimeString('ru-RU', {hour:'2-digit',minute:'2-digit'}) + ']</small> ' + msg;
+            entry.innerHTML = '<small>[' + new Date().toLocaleTimeString('ru-RU', {hour:'2-digit', minute:'2-digit'}) + ']</small> ' + msg;
             log.insertBefore(entry, log.firstChild);
         }
 
-        // Закрытие по клику вне модалки
-        window.onclick = function(event) {
-            const modal = document.getElementById('inventoryModal');
-            if (event.target == modal) {
-                modal.style.display = "none";
-            }
+        function showAlert(msg) {
+            addLog('<span style="color:#ff6666">⚠️ ' + msg + '</span>');
         }
+
+        showPanel('status');
     </script>
 </body>
 </html>

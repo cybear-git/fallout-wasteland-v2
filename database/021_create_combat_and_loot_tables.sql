@@ -59,8 +59,8 @@ CREATE TABLE IF NOT EXISTS loot_table_items (
     item_type ENUM('loot', 'weapon', 'armor', 'consumable') NOT NULL,
     item_key VARCHAR(50) NOT NULL COMMENT 'Ключ предмета из соответствующей таблицы',
     chance DECIMAL(5,4) NOT NULL DEFAULT 0.0 COMMENT 'Шанс выпадения (0.0-1.0)',
-    min_qty TINYINT UNSIGNED DEFAULT 1,
-    max_qty TINYINT UNSIGNED DEFAULT 1,
+    min_qty SMALLINT UNSIGNED DEFAULT 1,
+    max_qty SMALLINT UNSIGNED DEFAULT 1,
     guaranteed TINYINT(1) DEFAULT 0,
     
     CONSTRAINT fk_lti_loot_table FOREIGN KEY (loot_table_id) REFERENCES loot_tables(id) ON DELETE CASCADE,
@@ -95,9 +95,7 @@ CREATE TABLE IF NOT EXISTS player_effects (
     INDEX idx_effects_expires (expires_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- 7. Добавляем поле is_boss в таблицу monsters (если его нет)
-ALTER TABLE monsters 
-ADD COLUMN IF NOT EXISTS is_boss TINYINT(1) DEFAULT 0 COMMENT 'Является ли боссом' AFTER habitat;
+-- 7. is_boss already exists in monsters table (added in 005)
 
 -- 8. Создаем стандартные лут-таблицы для типов монстров
 INSERT INTO loot_tables (table_name, description, min_level, max_level) VALUES
@@ -144,9 +142,3 @@ INSERT INTO loot_table_items (loot_table_id, item_type, item_key, chance, min_qt
 (@lt_boss, 'weapon', 'fat_man', 1.00, 1, 1, 1),
 (@lt_boss, 'loot', 'nuclear_material', 0.50, 5, 10, 0),
 (@lt_boss, 'consumable', 'med_x', 0.80, 3, 5, 0);
-
-COMMENT ON TABLE combats IS 'Активные боевые сессии игроков';
-COMMENT ON TABLE combat_logs IS 'Лог действий в бою';
-COMMENT ON TABLE loot_tables IS 'Шаблоны дропа для разных типов врагов';
-COMMENT ON TABLE loot_table_items IS 'Предметы в лут-таблицах с шансами выпадения';
-COMMENT ON TABLE player_effects IS 'Временные эффекты игрока (баффы/дебаффы/зависимости)';

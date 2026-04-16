@@ -1,15 +1,13 @@
 <?php
-/**
- * СИСТЕМА ПОИСКА И ЛУТА
- * Обработка действия "Искать предметы" на текущей локации
- */
+declare(strict_types=1);
 
 require_once __DIR__ . '/../../config/database.php';
 require_once __DIR__ . '/../../includes/auth.php';
 
+session_start();
+
 header('Content-Type: application/json');
 
-// Проверка авторизации и сессии
 if (!isLoggedIn()) {
     echo json_encode(['success' => false, 'error' => 'Необходима авторизация']);
     exit;
@@ -21,159 +19,153 @@ $pdo = getDbConnection();
 try {
     $pdo->beginTransaction();
 
-    // 1. Проверка кулдауна поиска (нельзя искать чаще 1 раза в 30 сек)
+    // Проверка кулдауна поиска (нельзя искать чаще 1 раза в 30 сек)
     $stmt = $pdo->prepare("
-        SELECT created_at 
-        FROM search_logs 
-        WHERE player_id = ? 
-        ORDER BY created_at DESC 
-        LIMIT 1
+        SELECT created_at FROM search_logs 
+        WHERE player_id = ? ORDER BY created_at DESC LIMIT 1
     ");
-    $stmt->execute([$player['id']]);
+    $stmt->execute([$player['player_id']]);
     $lastSearch = $stmt->fetch(PDO::FETCH_ASSOC);
 
     if ($lastSearch) {
         $lastTime = strtotime($lastSearch['created_at']);
-        $cooldown = 30; // секунд
+        $cooldown = 30;
         if (time() - $lastTime < $cooldown) {
             $remaining = $cooldown - (time() - $lastTime);
             throw new Exception("Поиск еще недоступен. Подождите {$remaining} сек.");
         }
     }
 
-    // 2. Получение типа текущей локации
+    // Получение персонажа и текущей позиции
     $stmt = $pdo->prepare("
-        SELECT mn.tile_type, lt.name as location_name
-        FROM map_nodes mn
-        JOIN players p ON p.current_node_id = mn.id
+        SELECT c.*, lt.type_name, l.danger_level, l.loot_quality, l.radiation_level
+        FROM characters c
+        JOIN players p ON p.id = c.player_id
+        LEFT JOIN map_nodes mn ON mn.pos_x = c.pos_x AND mn.pos_y = c.pos_y
         LEFT JOIN location_types lt ON lt.id = mn.location_type_id
+        LEFT JOIN locations l ON l.id = mn.location_id
         WHERE p.id = ?
     ");
-    $stmt->execute([$player['id']]);
-    $location = $stmt->fetch(PDO::FETCH_ASSOC);
+    $stmt->execute([$player['player_id']]);
+    $character = $stmt->fetch(PDO::FETCH_ASSOC);
 
-    if (!$location) {
-        throw new Exception("Не удалось определить локацию");
+    if (!$character) {
+        throw new Exception("Персонаж не найден");
     }
 
-    $tileType = $location['tile_type'];
-    $locationName = $location['location_name'] ?? 'Пустошь';
+    $tileType = $character['type_name'] ?? 'Пустошь';
+    $lootQuality = $character['loot_quality'] ?? 1;
+    $dangerLevel = $character['danger_level'] ?? 1;
 
-    // 3. Определение шансов лута для типа местности
-    // Базовые шансы модифицируются Восприятием игрока
-    $perception = $player['perception'];
-    $baseChance = 0.30; // 30% базовый шанс найти что-то
-    $luckBonus = $player['luck'] * 0.02; // +2% за удачу
-    $percBonus = $perception * 0.03; // +3% за восприятие
-    
-    $finalChance = min(0.95, $baseChance + $luckBonus + $percBonus);
-
-    // 4. Бросок кубика
-    $roll = mt_rand() / mt_getrandmax(); // 0.0 - 1.0
+    // Определение шансов лута
+    $perception = $character['perception'] ?? 5;
+    $luck = $character['luck'] ?? 5;
+    $baseChance = 0.25 + ($lootQuality * 0.05);
+    $luckBonus = $luck * 0.02;
+    $percBonus = $perception * 0.03;
+    $finalChance = min(0.90, $baseChance + $luckBonus + $percBonus);
 
     $result = [
         'success' => true,
         'message' => '',
         'found_item' => null,
-        'monster_encounter' => false,
+        'monster_encounter' => null,
         'xp_gained' => 0,
         'quote' => ''
     ];
 
-    if ($roll > $finalChance) {
-        // Ничего не найдено
-        $result['message'] = "Вы тщательно обыскали {$locationName}, но ничего ценного не обнаружили.";
-        
-        // Шанс встретить монстра при неудачном поиске (10%)
-        if (mt_rand(1, 100) <= 10) {
-            $result['monster_encounter'] = true;
-            $result['message'] .= " Внезапно из укрытия выпрыгнул враг!";
-            // Тут можно запустить встречу с монстром (логика боя)
-        }
-    } else {
-        // Что-то найдено!
+    // Поиск лута
+    if (mt_rand(1, 100) / 100 <= $finalChance) {
+        // Получаем случайный лут из базы
         $stmt = $pdo->prepare("
-            SELECT i.*, lt.min_qty, lt.max_qty
-            FROM loot_tables lt
-            JOIN items i ON i.id = lt.item_id
-            WHERE lt.location_type = ?
-            ORDER BY lt.chance DESC
+            SELECT * FROM items 
+            WHERE type_id IN (1, 2, 3, 5)
+            ORDER BY RAND() LIMIT 1
         ");
-        
-        // Маппинг tile_type на location_type для лута
-        $lootTypeMap = [
-            'wasteland' => 'wasteland',
-            'city_ruins' => 'city_ruins',
-            'factory' => 'factory',
-            'military_base' => 'military',
-            'vault_entrance' => 'military',
-            'forest' => 'wasteland',
-            'desert' => 'wasteland'
-        ];
-        
-        $lootKey = $lootTypeMap[$tileType] ?? 'wasteland';
-        $stmt->execute([$lootKey]);
-        $lootItems = $stmt->fetchAll(PDO::FETCH_ASSOC);
+        $stmt->execute();
+        $item = $stmt->fetch(PDO::FETCH_ASSOC);
 
-        if (!empty($lootItems)) {
-            // Выбор случайного предмета из доступных
-            $foundItem = $lootItems[array_rand($lootItems)];
-            $qty = mt_rand($foundItem['min_qty'], $foundItem['max_qty']);
+        if ($item) {
+            $qty = max(1, rand(1, $lootQuality + 2));
+            
+            $itemType = match($item['type_id']) {
+                1 => 'weapon',
+                2 => 'armor',
+                3 => 'consumable',
+                5 => 'loot',
+                default => 'loot'
+            };
 
-            // Добавление в инвентарь
+            // Добавляем в инвентарь
             $stmt = $pdo->prepare("
-                INSERT INTO player_inventory (player_id, item_id, quantity)
-                VALUES (?, ?, ?)
+                INSERT INTO inventory (character_id, item_type, item_key, quantity, condition_pct)
+                VALUES (?, ?, ?, ?, 100.00)
                 ON DUPLICATE KEY UPDATE quantity = quantity + VALUES(quantity)
             ");
-            $stmt->execute([$player['id'], $foundItem['id'], $qty]);
+            $stmt->execute([$character['id'], $itemType, $item['name'], $qty]);
 
             $xpGain = 5 + ($perception * 2);
-            $stmt = $pdo->prepare("UPDATE players SET xp = xp + ? WHERE id = ?");
-            $stmt->execute([$xpGain, $player['id']]);
+            $stmt = $pdo->prepare("UPDATE characters SET xp = xp + ? WHERE id = ?");
+            $stmt->execute([$xpGain, $character['id']]);
 
             $result['found_item'] = [
-                'name' => $foundItem['name'],
+                'name' => $item['name'],
                 'quantity' => $qty,
-                'description' => $foundItem['description']
+                'type' => $itemType
             ];
             $result['xp_gained'] = $xpGain;
-            $result['message'] = "Найдено: {$foundItem['name']} x{$qty}! (+{$xpGain} XP)";
-        } else {
-            $result['message'] = "В этом месте пока пусто.";
+            $result['message'] = "Найдено: {$item['name']} x{$qty}! (+{$xpGain} XP)";
         }
     }
 
-    // 5. Получение атмосферной фразы для поиска
+    if (empty($result['message'])) {
+        $result['message'] = "Вы обыскали местность, но ничего ценного не нашли.";
+        
+        // Шанс встретить монстра при неудачном поиске
+        if (mt_rand(1, 100) <= 10 + ($dangerLevel * 2)) {
+            $stmt = $pdo->prepare("
+                SELECT id, name, hp, max_hp, damage, level 
+                FROM monsters 
+                WHERE is_active = 1 AND level BETWEEN ? AND ?
+                ORDER BY RAND() LIMIT 1
+            ");
+            $stmt->execute([max(1, $dangerLevel - 1), $dangerLevel + 2]);
+            $monster = $stmt->fetch(PDO::FETCH_ASSOC);
+            if ($monster) {
+                $result['monster_encounter'] = $monster;
+                $result['message'] .= " Внезапно из укрытия выпрыгнул {$monster['name']}!";
+            }
+        }
+    }
+
+    // Шанс найти крышки
+    if (mt_rand(1, 100) <= 20 + ($luck * 2)) {
+        $caps = rand(1, 5 + ($luck * 2));
+        $stmt = $pdo->prepare("UPDATE characters SET caps = caps + ? WHERE id = ?");
+        $stmt->execute([$caps, $character['id']]);
+        $result['message'] .= " Вы нашли {$caps} крышек.";
+    }
+
+    // Атмосферная фраза
     $stmt = $pdo->prepare("
-        SELECT text 
-        FROM location_quotes 
-        WHERE location_type = ? OR location_type IS NULL
-        ORDER BY RAND() 
-        LIMIT 1
+        SELECT lq.quote_text FROM location_quotes lq
+        JOIN location_types lt ON lt.type_key = lq.tile_type
+        WHERE lt.type_name = ? AND lq.is_active = 1
+        ORDER BY RAND() LIMIT 1
     ");
     $stmt->execute([$tileType]);
     $quoteRow = $stmt->fetch(PDO::FETCH_ASSOC);
-    $result['quote'] = $quoteRow['text'] ?? '';
+    $result['quote'] = $quoteRow['quote_text'] ?? '';
 
-    // 6. Логирование
+    // Логирование
     $stmt = $pdo->prepare("
-        INSERT INTO search_logs (player_id, map_node_id, result, item_found_id, xp_gained)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO search_logs (player_id, map_node_id, result, item_found_key, xp_gained)
+        VALUES (?, 0, ?, ?, ?)
     ");
-    
     $logResult = $result['monster_encounter'] ? 'monster_encounter' : 
                  ($result['found_item'] ? 'found_item' : 'nothing');
-    $itemId = $result['found_item'] ? 
-              (isset($foundItem['id']) ? $foundItem['id'] : null) : null;
-    
-    $stmt->execute([
-        $player['id'], 
-        $player['current_node_id'], 
-        $logResult, 
-        $itemId, 
-        $result['xp_gained']
-    ]);
+    $itemKey = $result['found_item'] ? ($result['found_item']['name'] ?? null) : null;
+    $stmt->execute([$player['player_id'], $logResult, $itemKey, $result['xp_gained']]);
 
     $pdo->commit();
     echo json_encode($result);

@@ -8,6 +8,40 @@ declare(strict_types=1);
  */
 
 /**
+ * Проверка, авторизован ли игрок
+ */
+function isLoggedIn(): bool {
+    return !empty($_SESSION['player_id']);
+}
+
+/**
+ * Получение данных текущего игрока и персонажа из БД
+ */
+function getCurrentPlayer(): array {
+    $pdo = getDbConnection();
+    $stmt = $pdo->prepare("
+        SELECT p.id as player_id, p.username, p.has_junk_jet, p.junk_jet_ammo,
+               c.id as character_id, c.name as character_name, c.status,
+               c.level, c.xp, c.hp, c.max_hp, c.radiation, c.caps,
+               c.strength, c.perception, c.endurance, c.charisma,
+               c.intelligence, c.agility, c.luck,
+               c.pos_x, c.pos_y,
+               mn.id as map_node_id
+        FROM players p 
+        INNER JOIN characters c ON c.player_id = p.id
+        LEFT JOIN map_nodes mn ON mn.pos_x = c.pos_x AND mn.pos_y = c.pos_y
+        WHERE p.id = ?
+    ");
+    $stmt->execute([$_SESSION['player_id']]);
+    $player = $stmt->fetch();
+    
+    if (!$player) {
+        throw new Exception("Ошибка получения данных игрока.");
+    }
+    return $player;
+}
+
+/**
  * Проверка CSRF-токена
  */
 function validateCsrfToken(string $token): bool {
