@@ -1,2 +1,20 @@
-# Migration report
-MIGRATION_FIX_REPORT.md
+# Logs and temp files
+*.log
+
+# Environment
+.env
+.env.local
+*.env.*
+
+# Dependencies
+node_modules/
+
+# Editors
+.vscode/
+
+# Database related
+database/*.sql
+
+# Web server files
+public/*.php
+public/includes/*.php

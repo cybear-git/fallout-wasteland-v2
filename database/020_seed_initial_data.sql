@@ -1,25 +1,9 @@
 -- Миграция 020: Начальное наполнение базы данных для тестирования
 -- Включает: админа, стартовые локации, монстров (в т.ч. боссов), предметы, фразы
+-- ИСПРАВЛЕНО: Удалено создание таблицы admins (используем players.role = 'admin')
 
--- 1. Создаем таблицу admins, если она не существует (для совместимости)
-CREATE TABLE IF NOT EXISTS admins (
-    id INT AUTO_INCREMENT PRIMARY KEY,
-    username VARCHAR(50) UNIQUE NOT NULL,
-    password_hash VARCHAR(255) NOT NULL,
-    email VARCHAR(100) DEFAULT NULL,
-    role VARCHAR(20) DEFAULT 'admin',
-    is_active TINYINT(1) DEFAULT 1,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    last_login TIMESTAMP NULL DEFAULT NULL,
-    INDEX idx_username (username),
-    INDEX idx_active (is_active)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
-
--- Создаем администратора (пароль: admin123)
--- Хэш получен через password_hash('admin123', PASSWORD_DEFAULT)
-INSERT INTO admins (username, password_hash, email, role, is_active) VALUES
-('admin', '$2y$10$92IXUNpkjO0rOQ5byMi.Ye4oKoEa3Ro9llC/.og/at2.uheWG/igi', 'admin@vault101.com', 'superadmin', 1)
-ON DUPLICATE KEY UPDATE email = VALUES(email);
+-- 1. ТАБЛИЦА ADMINS УДАЛЕНА - используем players с role='admin'
+-- Админ создается через скрипт scripts/create_admin.php
 
 -- 2. Добавляем недостающие типы локаций в справочник (если их нет)
 INSERT INTO location_types (type_key, type_name, description, base_difficulty) VALUES

@@ -141,7 +141,7 @@
             </div>
 
             <!-- Форма входа -->
-            <form method="POST" class="auth-form active" id="login-form">
+            <form method="POST" action="login.php" class="auth-form active" id="login-form">
                 <input type="hidden" name="action" value="login">
                 <div class="form-group">
                     <label>Имя пользователя:</label>
@@ -155,7 +155,7 @@
             </form>
 
             <!-- Форма регистрации -->
-            <form method="POST" class="auth-form" id="register-form">
+            <form method="POST" action="register.php" class="auth-form" id="register-form">
                 <input type="hidden" name="action" value="register">
                 <div class="form-group">
                     <label>Придумайте имя:</label>
