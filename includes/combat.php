@@ -302,6 +302,22 @@ function combatAttack(int $combatId, int $characterId, int $targetIndex): array 
         $enemyResponse = null;
         if (!$killed && $enemy['hp'] > 0) {
             $enemyResponse = monsterTurn($combatId, $characterId, $targetIndex, $enemy);
+            // Обновляем данные игрока после ответа врага
+            $updatedPlayer = getCharacterStats($characterId);
+            return [
+                'success' => true,
+                'killed' => $killed,
+                'damage_dealt' => $finalDamage,
+                'is_crit' => $isCrit,
+                'enemy_hp' => $enemy['hp'],
+                'enemy_max_hp' => $enemy['max_hp'],
+                'xp_gained' => $xpGained,
+                'loot' => $lootDropped,
+                'enemy_response' => $enemyResponse,
+                'player_hp' => $updatedPlayer['hp'],
+                'player_max_hp' => $updatedPlayer['max_hp'],
+                'message' => $description
+            ];
         }
         
         return [
@@ -314,6 +330,8 @@ function combatAttack(int $combatId, int $characterId, int $targetIndex): array 
             'xp_gained' => $xpGained,
             'loot' => $lootDropped,
             'enemy_response' => $enemyResponse,
+            'player_hp' => $player['hp'],
+            'player_max_hp' => $player['max_hp'],
             'message' => $description
         ];
         
@@ -559,6 +577,26 @@ function logCombatAction(int $combatId, string $actorType, int $actorId, string 
 function fleeCombat(int $combatId, int $characterId): array {
     global $pdo;
     
+    // Проверка - бой еще активен?
+    $stmt = $pdo->prepare("SELECT * FROM combats WHERE id = ?");
+    $stmt->execute([$combatId]);
+    $combat = $stmt->fetch(PDO::FETCH_ASSOC);
+    
+    if (!$combat || ($combat['state_id'] ?? 0) > 0) {
+        return ['success' => false, 'error' => 'Бой уже завершен'];
+    }
+    
+    $enemies = json_decode($combat['enemy_json'], true);
+    
+    // Получаем первого живого врага для атаки при неудачном побеге
+    $aliveEnemy = null;
+    foreach ($enemies as $idx => $enemy) {
+        if ($enemy['hp'] > 0) {
+            $aliveEnemy = ['index' => $idx, 'data' => $enemy];
+            break;
+        }
+    }
+    
     $success = mt_rand(1, 100) <= 50;
     
     if ($success) {
@@ -570,13 +608,55 @@ function fleeCombat(int $combatId, int $characterId): array {
             'message' => 'Вам удалось сбежать!'
         ];
     } else {
+        // Неудачный побег - враг атакует
         $stmt = $pdo->prepare("UPDATE combats SET current_turn_index = current_turn_index + 1 WHERE id = ?");
         $stmt->execute([$combatId]);
+        
+        $responseMsg = 'Побег не удался!';
+        
+        // Атака врага
+        if ($aliveEnemy) {
+            $player = getCharacterStats($characterId);
+            $enemy = &$aliveEnemy['data'];
+            
+            $baseDamage = $enemy['damage'];
+            $armorReduction = getPlayerArmor($characterId);
+            $finalDamage = max(1, $baseDamage - $armorReduction);
+            
+            $newHp = max(0, $player['hp'] - $finalDamage);
+            
+            $stmt = $pdo->prepare("UPDATE characters SET hp = ? WHERE id = ?");
+            $stmt->execute([$newHp, $characterId]);
+            
+            $responseMsg .= " {$enemy['name']} атакует вас и наносит {$finalDamage} урона!";
+            
+            // Проверяем смерть игрока
+            if ($newHp <= 0) {
+                endCombat($combatId, 'lost');
+                applyDeathPenalty($characterId);
+                
+                return [
+                    'success' => true,
+                    'escaped' => false,
+                    'message' => $responseMsg,
+                    'player_hp' => 0,
+                    'player_dead' => true
+                ];
+            }
+            
+            return [
+                'success' => true,
+                'escaped' => false,
+                'message' => $responseMsg,
+                'player_hp' => $newHp,
+                'player_max_hp' => $player['max_hp']
+            ];
+        }
         
         return [
             'success' => true,
             'escaped' => false,
-            'message' => 'Побег не удался! Враг атакует.'
+            'message' => $responseMsg
         ];
     }
 }
