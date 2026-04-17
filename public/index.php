@@ -118,6 +118,15 @@ try {
                 <button class="nav-btn" onclick="showPanel('history')" id="btn-history">
                     📜
                 </button>
+                <button class="nav-btn" onclick="showPanel('factions')" id="btn-factions">
+                    🎖️
+                </button>
+                <button class="nav-btn" onclick="showPanel('dungeons')" id="btn-dungeons">
+                    🏰
+                </button>
+                <button class="nav-btn" onclick="showPanel('fasttravel')" id="btn-fasttravel">
+                    ⚡
+                </button>
             </nav>
 
             <!-- ЦЕНТРАЛЬНАЯ ОБЛАСТЬ -->
@@ -245,6 +254,27 @@ try {
                         </div>
                     </div>
                 </div>
+
+                <div class="panel-content hidden" id="panel-factions">
+                    <h2 class="panel-title">🎖️ ФРАКЦИИ</h2>
+                    <div class="factions-list" id="factions-list">
+                        <div class="loading">Загрузка фракций...</div>
+                    </div>
+                </div>
+
+                <div class="panel-content hidden" id="panel-dungeons">
+                    <h2 class="panel-title">🏰 ПОДЗЕМЕЛЬЯ</h2>
+                    <div class="dungeons-list" id="dungeons-list">
+                        <div class="loading">Загрузка подземелий...</div>
+                    </div>
+                </div>
+
+                <div class="panel-content hidden" id="panel-fasttravel">
+                    <h2 class="panel-title">⚡ БЫСТРОЕ ПЕРЕМЕЩЕНИЕ</h2>
+                    <div class="fasttravel-list" id="fasttravel-list">
+                        <div class="loading">Загрузка точек...</div>
+                    </div>
+                </div>
             </div>
 
             <!-- ПРАВАЯ ПАНЕЛЬ - КРОССОВИДНОЕ УПРАВЛЕНИЕ -->
@@ -340,6 +370,9 @@ try {
             if (name === 'quests') loadQuests();
             if (name === 'vendors') loadVendors();
             if (name === 'crafting') loadCrafting();
+            if (name === 'factions') loadFactions();
+            if (name === 'dungeons') loadDungeons();
+            if (name === 'fasttravel') loadFastTravel();
         }
 
         // Глобальное состояние боя - нельзя двигаться во время боя
@@ -885,6 +918,188 @@ try {
                     loadInventory();
                 } else {
                     showAlert(data.error || 'Ошибка крафта');
+                }
+            })
+            .catch(e => showAlert('Ошибка сети'));
+        }
+
+        // Загрузка фракций
+        function loadFactions() {
+            fetch('/api/factions.php?action=get_status')
+                .then(r => r.json())
+                .then(data => {
+                    const container = document.getElementById('factions-list');
+                    if (!container) return;
+                    
+                    if (data.error) {
+                        container.innerHTML = '<div class="error">' + data.error + '</div>';
+                        return;
+                    }
+                    
+                    if (!data.factions || data.factions.length === 0) {
+                        container.innerHTML = '<div class="empty">Нет данных о фракциях</div>';
+                        return;
+                    }
+                    
+                    let html = '';
+                    data.factions.forEach(f => {
+                        const repColor = f.reputation >= 500 ? '#4CAF50' : (f.reputation >= 100 ? '#8BC34A' : (f.reputation >= -100 ? '#FFC107' : (f.reputation >= -500 ? '#F44336' : '#B71C1C')));
+                        const repBarWidth = Math.min(100, Math.max(0, ((f.reputation + 1000) / 2000) * 100));
+                        html += `<div class="faction-item" style="border-left: 4px solid ${f.color_code}">
+                            <div class="faction-name">${f.name}</div>
+                            <div class="faction-desc">${f.description}</div>
+                            <div class="faction-rank">Ранг: <strong>${f.rank_title}</strong></div>
+                            <div class="faction-rep">Репутация: <span style="color:${repColor}">${f.reputation}</span></div>
+                            <div class="rep-bar-container"><div class="rep-bar-fill" style="width:${repBarWidth}%;background:${repColor}"></div></div>
+                        </div>`;
+                    });
+                    container.innerHTML = html;
+                })
+                .catch(e => {
+                    document.getElementById('factions-list').innerHTML = '<div class="error">Ошибка загрузки фракций</div>';
+                });
+        }
+
+        // Загрузка подземелий
+        function loadDungeons() {
+            fetch('/api/dungeons.php?action=get_dungeons')
+                .then(r => r.json())
+                .then(data => {
+                    const container = document.getElementById('dungeons-list');
+                    if (!container) return;
+                    
+                    if (data.error) {
+                        container.innerHTML = '<div class="error">' + data.error + '</div>';
+                        return;
+                    }
+                    
+                    if (!data.dungeons || data.dungeons.length === 0) {
+                        container.innerHTML = '<div class="empty">Нет доступных подземелий</div>';
+                        return;
+                    }
+                    
+                    let html = '';
+                    data.dungeons.forEach(d => {
+                        const typeIcon = d.location_type === 'boss_arena' ? '👹' : '💀';
+                        const accessible = d.accessible ? '' : 'disabled';
+                        const reqLevel = d.accessible ? '' : ` <small class="missing">(требуется ${d.min_level} ур.)</small>`;
+                        const discovered = d.discovered > 0 ? '✅' : '🔒';
+                        const bossInfo = d.boss_info ? `<div class="dungeon-boss">Босс: ${d.boss_info.name} (ур.${d.boss_info.level})</div>` : '';
+                        
+                        html += `<div class="dungeon-item ${d.accessible ? 'accessible' : 'locked'}">
+                            <div class="dungeon-header">${typeIcon} ${d.name} ${discovered}${reqLevel}</div>
+                            <div class="dungeon-desc">${d.description || 'Описание отсутствует'}</div>
+                            ${bossInfo}
+                            <button class="dungeon-btn" ${accessible} onclick="enterDungeon(${d.id})">⚔️ Войти</button>
+                        </div>`;
+                    });
+                    container.innerHTML = html;
+                })
+                .catch(e => {
+                    document.getElementById('dungeons-list').innerHTML = '<div class="error">Ошибка загрузки подземелий</div>';
+                });
+        }
+
+        function enterDungeon(locationId) {
+            fetch('/api/dungeons.php', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ action: 'enter_dungeon', location_id: locationId })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    if (data.combat) {
+                        addLog('👹 БОСС: ' + data.data.monster.name);
+                        startCombat(data.data.monster);
+                    } else {
+                        addLog(data.message);
+                        // Симуляция прохождения подземелья
+                        setTimeout(() => completeDungeon(locationId), 3000);
+                    }
+                } else {
+                    showAlert(data.error || 'Ошибка входа в подземелье');
+                }
+            })
+            .catch(e => showAlert('Ошибка сети'));
+        }
+
+        function completeDungeon(locationId) {
+            fetch('/api/dungeons.php', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ action: 'complete_dungeon', location_id: locationId })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    addLog(data.message + data.loot_message);
+                    addLog('💰 Крышек: +' + data.rewards.caps);
+                    addLog('⭐ Опыта: +' + data.rewards.xp);
+                    loadDungeons();
+                } else {
+                    showAlert(data.error || 'Ошибка завершения подземелья');
+                }
+            })
+            .catch(e => showAlert('Ошибка сети'));
+        }
+
+        // Загрузка точек быстрого перемещения
+        function loadFastTravel() {
+            fetch('/api/fast_travel.php?action=get_points')
+                .then(r => r.json())
+                .then(data => {
+                    const container = document.getElementById('fasttravel-list');
+                    if (!container) return;
+                    
+                    if (data.error) {
+                        container.innerHTML = '<div class="error">' + data.error + '</div>';
+                        return;
+                    }
+                    
+                    if (!data.points || data.points.length === 0) {
+                        container.innerHTML = '<div class="empty">Нет открытых точек быстрого перемещения</div><p class="hint">Посещайте новые локации чтобы открывать точки</p>';
+                        return;
+                    }
+                    
+                    let html = '';
+                    data.points.forEach(p => {
+                        html += `<div class="fasttravel-item">
+                            <div class="fasttravel-name">📍 ${p.name}</div>
+                            <div class="fasttravel-coords">Координаты: (${p.x}, ${p.y})</div>
+                            <div class="fasttravel-desc">${p.description || ''}</div>
+                            <button class="travel-btn" onclick="travelTo(${p.id})">⚡ Телепорт (10 💰)</button>
+                        </div>`;
+                    });
+                    container.innerHTML = html;
+                })
+                .catch(e => {
+                    document.getElementById('fasttravel-list').innerHTML = '<div class="error">Ошибка загрузки точек</div>';
+                });
+        }
+
+        function travelTo(locationId) {
+            if (inCombat) {
+                showAlert('⚠️ Нельзя телепортироваться во время боя!');
+                return;
+            }
+            if (!confirm('Телепортироваться за 10 крышек?')) return;
+            
+            fetch('/api/fast_travel.php', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ action: 'travel', location_id: locationId })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    addLog(data.message);
+                    posX = data.new_position.x;
+                    posY = data.new_position.y;
+                    updateLocation({pos_x: posX, pos_y: posY, location_name: data.message});
+                    loadFastTravel();
+                } else {
+                    showAlert(data.error || 'Ошибка телепортации');
                 }
             })
             .catch(e => showAlert('Ошибка сети'));
