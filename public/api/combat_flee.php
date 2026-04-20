@@ -13,7 +13,7 @@ if (!isLoggedIn()) {
     exit;
 }
 
-$pdo = getDB();
+$pdo = getDbConnection();
 $characterId = getCurrentCharacterId();
 $engine = new CombatEngine($pdo, $characterId);
 

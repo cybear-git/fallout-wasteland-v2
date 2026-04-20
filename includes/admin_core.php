@@ -12,7 +12,7 @@ require_once __DIR__ . '/db.php';
  * @return array|null Возвращает данные роли или null если нет прав
  */
 function checkAdminAccess() {
-    $pdo = getDB();
+    $pdo = getDbConnection();
     $player = getCurrentPlayer();
     
     if (!$player) {
@@ -65,7 +65,7 @@ function hasPermission($permission) {
  * @return void
  */
 function logAdminAction($action, $targetId = null, $details = []) {
-    $pdo = getDB();
+    $pdo = getDbConnection();
     $player = getCurrentPlayer();
     
     if (!$player) {
@@ -97,7 +97,7 @@ function logAdminAction($action, $targetId = null, $details = []) {
  * @return array
  */
 function getAdminPlayersList($limit = 50, $offset = 0) {
-    $pdo = getDB();
+    $pdo = getDbConnection();
     $stmt = $pdo->prepare("
         SELECT p.id, p.username, p.email, p.created_at, p.last_login, 
                c.level, c.xp, c.hp, c.max_hp, c.caps,
@@ -122,7 +122,7 @@ function getAdminPlayersList($limit = 50, $offset = 0) {
  * @return bool
  */
 function togglePlayerBan($targetPlayerId, $isBanned, $reason = '') {
-    $pdo = getDB();
+    $pdo = getDbConnection();
     
     // Блокируем доступ к аккаунту
     $stmt = $pdo->prepare("UPDATE players SET is_banned = ?, ban_reason = ? WHERE id = ?");
@@ -144,7 +144,7 @@ function togglePlayerBan($targetPlayerId, $isBanned, $reason = '') {
  * @return bool|string True при успехе, строка ошибки при неудаче
  */
 function giveItemToPlayer($targetPlayerId, $itemId, $quantity) {
-    $pdo = getDB();
+    $pdo = getDbConnection();
     
     // Проверка существования предмета
     $stmt = $pdo->prepare("SELECT * FROM items WHERE id = ?");
@@ -201,7 +201,7 @@ function giveItemToPlayer($targetPlayerId, $itemId, $quantity) {
  * @return bool|string
  */
 function updateGameSetting($settingKey, $newValue) {
-    $pdo = getDB();
+    $pdo = getDbConnection();
 
     // Проверка существования настройки
     $stmt = $pdo->prepare("SELECT id FROM game_settings WHERE setting_key = ?");
@@ -229,7 +229,7 @@ function updateGameSetting($settingKey, $newValue) {
  * @return array
  */
 function getAdminLogs($limit = 100) {
-    $pdo = getDB();
+    $pdo = getDbConnection();
     $stmt = $pdo->prepare("
         SELECT al.*, p.username as admin_name
         FROM admin_logs al
