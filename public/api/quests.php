@@ -153,9 +153,9 @@ try {
                 // Здесь можно добавить логику повышения уровня
             }
             
-            // Выдача награды: предмет
+            // Выдача награды: предмет (ИСПРАВЛЕНО: character_items вместо user_items)
             if ($playerQuest['reward_item_id'] && $playerQuest['reward_item_count'] > 0) {
-                $itemSql = "INSERT INTO user_items (character_id, item_id, quantity) VALUES (?, ?, ?)
+                $itemSql = "INSERT INTO character_items (character_id, item_id, quantity) VALUES (?, ?, ?)
                            ON DUPLICATE KEY UPDATE quantity = quantity + ?";
                 $itemStmt = $pdo->prepare($itemSql);
                 $itemStmt->execute([

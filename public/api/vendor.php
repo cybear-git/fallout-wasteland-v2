@@ -10,7 +10,7 @@ if (!isLoggedIn()) {
     exit;
 }
 
-$userId = getCurrentUserId();
+$characterId = getCurrentCharacterId();
 $action = $_POST['action'] ?? $_GET['action'] ?? '';
 
 try {
@@ -67,10 +67,10 @@ try {
             
             $price = floor($offer['base_price'] * $offer['price_multiplier']);
             
-            // Проверка денег игрока
-            $playerSql = "SELECT caps FROM users WHERE id = ?";
+            // Проверка денег игрока (ИСПРАВЛЕНО: characters вместо users)
+            $playerSql = "SELECT caps FROM characters WHERE id = ?";
             $playerStmt = $pdo->prepare($playerSql);
-            $playerStmt->execute([$userId]);
+            $playerStmt->execute([$characterId]);
             $player = $playerStmt->fetch(PDO::FETCH_ASSOC);
             
             if ($player['caps'] < $price) {
@@ -80,14 +80,14 @@ try {
             // Транзакция покупки
             $pdo->beginTransaction();
             
-            // Списание денег
-            $updateCaps = $pdo->prepare("UPDATE users SET caps = caps - ? WHERE id = ?");
-            $updateCaps->execute([$price, $userId]);
+            // Списание денег (ИСПРАВЛЕНО: characters вместо users)
+            $updateCaps = $pdo->prepare("UPDATE characters SET caps = caps - ? WHERE id = ?");
+            $updateCaps->execute([$price, $characterId]);
             
-            // Добавление предмета в инвентарь
-            $addItem = $pdo->prepare("INSERT INTO user_items (user_id, item_id, quantity) VALUES (?, ?, 1)
+            // Добавление предмета в инвентарь (ИСПРАВЛЕНО: character_items вместо user_items)
+            $addItem = $pdo->prepare("INSERT INTO character_items (character_id, item_id, quantity) VALUES (?, ?, 1)
                                      ON DUPLICATE KEY UPDATE quantity = quantity + 1");
-            $addItem->execute([$userId, $itemId]);
+            $addItem->execute([$characterId, $itemId]);
             
             // Уменьшение стока (если не бесконечный)
             if ($offer['stock_count'] > 0) {
@@ -112,20 +112,20 @@ try {
 
         case 'sell':
             $vendorId = (int)($_POST['vendor_id'] ?? 0);
-            $userItemId = (int)($_POST['user_item_id'] ?? 0);
+            $characterItemId = (int)($_POST['character_item_id'] ?? 0);
             
-            if (!$vendorId || !$userItemId) {
+            if (!$vendorId || !$characterItemId) {
                 throw new Exception('Invalid parameters');
             }
             
-            // Проверка наличия предмета у игрока
-            $itemSql = "SELECT ui.quantity, i.base_price, i.name, i.type_id 
-                       FROM user_items ui 
-                       JOIN items i ON ui.item_id = i.id 
-                       WHERE ui.id = ? AND ui.user_id = ? AND ui.quantity > 0";
+            // Проверка наличия предмета у игрока (ИСПРАВЛЕНО: character_items вместо user_items)
+            $itemSql = "SELECT ci.quantity, i.base_price, i.name, i.type_id 
+                       FROM character_items ci 
+                       JOIN items i ON ci.item_id = i.id 
+                       WHERE ci.id = ? AND ci.character_id = ? AND ci.quantity > 0";
             
             $itemStmt = $pdo->prepare($itemSql);
-            $itemStmt->execute([$userItemId, $userId]);
+            $itemStmt->execute([$characterItemId, $characterId]);
             $myItem = $itemStmt->fetch(PDO::FETCH_ASSOC);
             
             if (!$myItem) {
@@ -142,17 +142,17 @@ try {
             // Транзакция продажи
             $pdo->beginTransaction();
             
-            // Добавление денег игроку
-            $updateCaps = $pdo->prepare("UPDATE users SET caps = caps + ? WHERE id = ?");
-            $updateCaps->execute([$sellPrice, $userId]);
+            // Добавление денег игроку (ИСПРАВЛЕНО: characters вместо users)
+            $updateCaps = $pdo->prepare("UPDATE characters SET caps = caps + ? WHERE id = ?");
+            $updateCaps->execute([$sellPrice, $characterId]);
             
             // Удаление предмета (или уменьшение количества)
             if ($myItem['quantity'] > 1) {
-                $removeItem = $pdo->prepare("UPDATE user_items SET quantity = quantity - 1 WHERE id = ?");
-                $removeItem->execute([$userItemId]);
+                $removeItem = $pdo->prepare("UPDATE character_items SET quantity = quantity - 1 WHERE id = ?");
+                $removeItem->execute([$characterItemId]);
             } else {
-                $removeItem = $pdo->prepare("DELETE FROM user_items WHERE id = ?");
-                $removeItem->execute([$userItemId]);
+                $removeItem = $pdo->prepare("DELETE FROM character_items WHERE id = ?");
+                $removeItem->execute([$characterItemId]);
             }
             
             $pdo->commit();

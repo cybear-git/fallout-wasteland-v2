@@ -4,7 +4,7 @@
  * Обработка действий, влияющих на репутацию, получение статуса
  */
 
-require_once __DIR__ . '/../../includes/config.php';
+require_once __DIR__ . '/../../includes/db.php';
 require_once __DIR__ . '/../../includes/auth.php';
 
 header('Content-Type: application/json');
@@ -15,7 +15,7 @@ if (!isLoggedIn()) {
     exit;
 }
 
-$userId = $_SESSION['user_id'];
+$characterId = getCurrentCharacterId();
 $action = $_POST['action'] ?? $_GET['action'] ?? '';
 
 try {
@@ -23,16 +23,16 @@ try {
 
     switch ($action) {
         case 'get_status':
-            // Получить статус всех фракций
+            // Получить статус всех фракций (ИСПРАВЛЕНО: character_id вместо user_id)
             $stmt = $pdo->prepare("
                 SELECT f.id, f.name, f.description, f.color_code, f.base_attitude,
                        COALESCE(pfr.reputation, 0) as reputation,
                        COALESCE(pfr.rank_title, 'Незнакомец') as rank_title
                 FROM factions f
-                LEFT JOIN player_faction_reputation pfr ON f.id = pfr.faction_id AND pfr.user_id = ?
+                LEFT JOIN player_faction_reputation pfr ON f.id = pfr.faction_id AND pfr.character_id = ?
                 ORDER BY f.id
             ");
-            $stmt->execute([$userId]);
+            $stmt->execute([$characterId]);
             $factions = $stmt->fetchAll(PDO::FETCH_ASSOC);
             
             // Рассчитать ранги
@@ -50,14 +50,14 @@ try {
                 elseif ($rep >= -500) $faction['rank_title'] = 'Заклятый враг';
                 else $faction['rank_title'] = 'Изгой';
                 
-                // Обновить титул в БД если изменился
+                // Обновить титул в БД если изменился (ИСПРАВЛЕНО: character_id вместо user_id)
                 if ($faction['rank_title'] !== 'Незнакомец') {
                     $updateStmt = $pdo->prepare("
-                        INSERT INTO player_faction_reputation (user_id, faction_id, reputation, rank_title)
+                        INSERT INTO player_faction_reputation (character_id, faction_id, reputation, rank_title)
                         VALUES (?, ?, ?, ?)
                         ON DUPLICATE KEY UPDATE rank_title = VALUES(rank_title)
                     ");
-                    $updateStmt->execute([$userId, $faction['id'], $rep, $faction['rank_title']]);
+                    $updateStmt->execute([$characterId, $faction['id'], $rep, $faction['rank_title']]);
                 }
             }
             
@@ -81,30 +81,30 @@ try {
                 throw new Exception('Фракция не найдена');
             }
             
-            // Обновление репутации
+            // Обновление репутации (ИСПРАВЛЕНО: character_id вместо user_id)
             $stmt = $pdo->prepare("
-                INSERT INTO player_faction_reputation (user_id, faction_id, reputation, rank_title)
+                INSERT INTO player_faction_reputation (character_id, faction_id, reputation, rank_title)
                 VALUES (?, ?, 0, 'Незнакомец')
                 ON DUPLICATE KEY UPDATE 
                     reputation = GREATEST(-1000, LEAST(1000, reputation + ?)),
                     last_action = CURRENT_TIMESTAMP
             ");
-            $stmt->execute([$userId, $factionId, $change]);
+            $stmt->execute([$characterId, $factionId, $change]);
             
-            // Логирование действия
+            // Логирование действия (ИСПРАВЛЕНО: character_id вместо user_id)
             $logStmt = $pdo->prepare("
-                INSERT INTO faction_action_log (user_id, faction_id, action_type, reputation_change)
+                INSERT INTO faction_action_log (character_id, faction_id, action_type, reputation_change)
                 VALUES (?, ?, ?, ?)
             ");
-            $logStmt->execute([$userId, $factionId, $reason, $change]);
+            $logStmt->execute([$characterId, $factionId, $reason, $change]);
             
-            // Получить обновленный статус
+            // Получить обновленный статус (ИСПРАВЛЕНО: character_id вместо user_id)
             $statusStmt = $pdo->prepare("
                 SELECT reputation, rank_title 
                 FROM player_faction_reputation 
-                WHERE user_id = ? AND faction_id = ?
+                WHERE character_id = ? AND faction_id = ?
             ");
-            $statusStmt->execute([$userId, $factionId]);
+            $statusStmt->execute([$characterId, $factionId]);
             $newStatus = $statusStmt->fetch(PDO::FETCH_ASSOC);
             
             $pdo->commit();
@@ -117,14 +117,14 @@ try {
             break;
 
         case 'get_effects':
-            // Получить бонусы от репутации
+            // Получить бонусы от репутации (ИСПРАВЛЕНО: character_id вместо user_id)
             $stmt = $pdo->prepare("
                 SELECT f.name, pfr.reputation, pfr.rank_title
                 FROM player_faction_reputation pfr
                 JOIN factions f ON pfr.faction_id = f.id
-                WHERE pfr.user_id = ? AND pfr.reputation != 0
+                WHERE pfr.character_id = ? AND pfr.reputation != 0
             ");
-            $stmt->execute([$userId]);
+            $stmt->execute([$characterId]);
             $effects = $stmt->fetchAll(PDO::FETCH_ASSOC);
             
             $bonuses = [];

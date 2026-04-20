@@ -11,16 +11,17 @@ CREATE TABLE IF NOT EXISTS factions (
 );
 
 -- 2. Таблица репутации игрока
+-- ВАЖНО: Используем character_id вместо user_id для связи с таблицей characters
 CREATE TABLE IF NOT EXISTS player_faction_reputation (
     id INT PRIMARY KEY AUTO_INCREMENT,
-    user_id INT NOT NULL,
+    character_id INT NOT NULL,
     faction_id INT NOT NULL,
     reputation INT DEFAULT 0, -- -1000 до 1000
     rank_title VARCHAR(50) DEFAULT 'Незнакомец',
     last_action TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE,
     FOREIGN KEY (faction_id) REFERENCES factions(id) ON DELETE CASCADE,
-    UNIQUE KEY unique_user_faction (user_id, faction_id)
+    UNIQUE KEY unique_character_faction (character_id, faction_id)
 );
 
 -- 3. Обновление таблицы локаций (добавляем тип и сложность)
@@ -31,25 +32,27 @@ ADD COLUMN boss_id INT NULL, -- ID монстра, если это босс
 ADD COLUMN fast_travel_point BOOLEAN DEFAULT FALSE;
 
 -- 4. Таблица открытых точек быстрого перемещения
+-- ВАЖНО: Используем character_id вместо user_id
 CREATE TABLE IF NOT EXISTS player_fast_travel (
     id INT PRIMARY KEY AUTO_INCREMENT,
-    user_id INT NOT NULL,
+    character_id INT NOT NULL,
     location_id INT NOT NULL,
     discovered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE,
     FOREIGN KEY (location_id) REFERENCES locations(id) ON DELETE CASCADE,
-    UNIQUE KEY unique_user_location (user_id, location_id)
+    UNIQUE KEY unique_character_location (character_id, location_id)
 );
 
 -- 5. Таблица логов действий фракций (для истории)
+-- ВАЖНО: Используем character_id вместо user_id
 CREATE TABLE IF NOT EXISTS faction_action_log (
     id INT PRIMARY KEY AUTO_INCREMENT,
-    user_id INT NOT NULL,
+    character_id INT NOT NULL,
     faction_id INT NOT NULL,
     action_type VARCHAR(50), -- 'kill_member', 'complete_quest', 'donate'
     reputation_change INT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
+    FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE,
     FOREIGN KEY (faction_id) REFERENCES factions(id) ON DELETE CASCADE
 );
 

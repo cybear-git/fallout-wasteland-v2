@@ -42,6 +42,14 @@ function getCurrentPlayer(): array {
 }
 
 /**
+ * Получение ID текущего персонажа (удобная обертка)
+ */
+function getCurrentCharacterId(): int {
+    $player = getCurrentPlayer();
+    return (int)$player['character_id'];
+}
+
+/**
  * Проверка CSRF-токена
  */
 function validateCsrfToken(string $token): bool {
