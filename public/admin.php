@@ -10,29 +10,19 @@ session_start([
 
 require_once __DIR__ . '/../config/database.php';
 require_once __DIR__ . '/../includes/csrf.php';
+require_once __DIR__ . '/../includes/admin_core.php'; // НОВАЯ СИСТЕМА АДМИНКИ
 
-if (empty($_SESSION['admin_id'])) {
-    header('Location: admin_login.php');
+// ПРОВЕРКА ДОСТУПА ЧЕРЕЗ НОВУЮ СИСТЕМУ РОЛЕЙ
+$adminRole = checkAdminAccess();
+if (!$adminRole) {
+    session_destroy();
+    header('Location: admin_login.php?error=access_denied');
     exit;
 }
 
 $pdo = getDbConnection();
 $adminId = (int)$_SESSION['admin_id'];
-
-$stmt = $pdo->prepare("
-    SELECT p.is_active, r.role_name 
-    FROM players p 
-    JOIN roles r ON r.id = p.role_id 
-    WHERE p.id = ?
-");
-$stmt->execute([$adminId]);
-$admin = $stmt->fetch();
-
-if (!$admin || $admin['role_name'] !== 'admin' || $admin['is_active'] != 1) {
-    session_destroy();
-    header('Location: admin_login.php?error=revoked');
-    exit;
-}
+$adminName = getCurrentPlayer()['username'] ?? 'Admin';
 
 $action = $_GET['action'] ?? 'dashboard';
 $id = isset($_GET['id']) ? (int)$_GET['id'] : 0;
@@ -47,14 +37,35 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !validateCsrfToken($_POST['csrf_tok
 try {
     switch ($action) {
         case 'users':
-            if (isset($_POST['toggle_active'])) {
-                $stmt = $pdo->prepare("UPDATE players SET is_active = NOT is_active WHERE id = ?");
-                $stmt->execute([$id]);
-                $success = 'Статус игрока изменён';
+            // БАН/РАЗБАН игрока
+            if (isset($_POST['toggle_ban']) && hasPermission('ban')) {
+                $targetId = (int)$_POST['player_id'];
+                $isBanned = (int)$_POST['is_banned'] === 1;
+                $reason = trim($_POST['ban_reason'] ?? '');
+                $result = togglePlayerBan($targetId, !$isBanned, $reason); // Переключаем состояние
+                if ($result === true) {
+                    $success = $isBanned ? 'Игрок разбанен' : 'Игрок забанен';
+                } else {
+                    $error = $result;
+                }
             }
-            if (isset($_POST['delete_user'])) {
+            // Выдача предмета
+            if (isset($_POST['give_item']) && hasPermission('edit_items')) {
+                $targetId = (int)$_POST['player_id'];
+                $itemId = (int)$_POST['item_id'];
+                $qty = max(1, (int)$_POST['quantity']);
+                $result = giveItemToPlayer($targetId, $itemId, $qty);
+                if ($result === true) {
+                    $success = "Предмет выдан (x{$qty})";
+                } else {
+                    $error = $result;
+                }
+            }
+            // Удаление игрока (только супер-админ)
+            if (isset($_POST['delete_user']) && hasPermission('all')) {
                 $stmt = $pdo->prepare("DELETE FROM players WHERE id = ?");
                 $stmt->execute([$id]);
+                logAdminAction('DELETE_PLAYER', $id);
                 $success = 'Игрок удалён';
                 header("Location: ?action=users");
                 exit;
@@ -62,16 +73,20 @@ try {
             break;
             
         case 'settings':
-            if (isset($_POST['save_setting'])) {
-                $stmt = $pdo->prepare("UPDATE game_settings SET setting_value = ? WHERE setting_key = ?");
-                $stmt->execute([$_POST['setting_value'], $_POST['setting_key']]);
-                $success = 'Настройка сохранена';
+            if (isset($_POST['save_setting']) && hasPermission('change_settings')) {
+                $result = updateGameSetting($_POST['setting_key'], $_POST['setting_value']);
+                if ($result === true) {
+                    $success = 'Настройка сохранена';
+                } else {
+                    $error = $result;
+                }
             }
             break;
             
         case 'logs':
-            if (isset($_POST['clear_logs'])) {
+            if (isset($_POST['clear_logs']) && hasPermission('view_logs')) {
                 $pdo->exec("TRUNCATE TABLE admin_logs");
+                logAdminAction('CLEAR_LOGS');
                 $success = 'Логи очищены';
             }
             break;
@@ -83,6 +98,7 @@ try {
     }
 } catch (Exception $e) {
     $error = 'Ошибка: ' . $e->getMessage();
+    logAdminAction('ERROR', null, ['message' => $e->getMessage(), 'action' => $action]);
 }
 
 // Загрузка данных
@@ -100,14 +116,9 @@ $stats = [
 
 switch ($action) {
     case 'users':
-        $items = $pdo->query("
-            SELECT p.id, p.username, p.is_active, p.created_at, r.role_name,
-                   c.name as character_name, c.level
-            FROM players p
-            LEFT JOIN roles r ON r.id = p.role_id
-            LEFT JOIN characters c ON c.player_id = p.id
-            ORDER BY p.id DESC LIMIT 100
-        ")->fetchAll();
+        $items = getAdminPlayersList(100, 0);
+        // Загружаем предметы для выпадающего списка выдачи
+        $allItems = $pdo->query("SELECT id, name, item_key FROM items ORDER BY name LIMIT 200")->fetchAll();
         break;
         
     case 'settings':
@@ -115,12 +126,7 @@ switch ($action) {
         break;
         
     case 'logs':
-        $items = $pdo->query("
-            SELECT l.*, p.username 
-            FROM admin_logs l
-            LEFT JOIN players p ON p.id = l.admin_id
-            ORDER BY l.created_at DESC LIMIT 100
-        ")->fetchAll();
+        $items = getAdminLogs(200);
         break;
         
     case 'locations':
@@ -422,6 +428,49 @@ switch ($action) {
                 <h1>👥 Игроки</h1>
                 <div class="subtitle">Управление аккаунтами</div>
             </div>
+            
+            <?php if (hasPermission('ban') || hasPermission('edit_items')): ?>
+            <div class="card" style="margin-bottom: 20px;">
+                <h3>⚡ Быстрые действия</h3>
+                <form method="POST" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; align-items: end;">
+                    <?= csrfField() ?>
+                    <div>
+                        <label>Игрок ID</label>
+                        <input type="number" name="player_id" required style="width: 100%;" placeholder="ID игрока">
+                    </div>
+                    
+                    <?php if (hasPermission('ban')): ?>
+                    <div>
+                        <label>Причина бана</label>
+                        <input type="text" name="ban_reason" placeholder="Нарушение правил" style="width: 100%;">
+                    </div>
+                    <div>
+                        <button type="submit" name="toggle_ban" class="btn btn-red">🔒 Бан/Разбан</button>
+                    </div>
+                    <?php endif; ?>
+                    
+                    <?php if (hasPermission('edit_items')): ?>
+                    <div>
+                        <label>Предмет</label>
+                        <select name="item_id" required style="width: 100%;">
+                            <option value="">Выбрать предмет</option>
+                            <?php foreach ($allItems as $item): ?>
+                                <option value="<?= $item['id'] ?>"><?= htmlspecialchars($item['name']) ?> (<?= htmlspecialchars($item['item_key']) ?>)</option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                    <div>
+                        <label>Кол-во</label>
+                        <input type="number" name="quantity" value="1" min="1" style="width: 100%;">
+                    </div>
+                    <div>
+                        <button type="submit" name="give_item" class="btn btn-blue">🎁 Выдать</button>
+                    </div>
+                    <?php endif; ?>
+                </form>
+            </div>
+            <?php endif; ?>
+            
             <div class="card">
                 <table>
                     <thead>
@@ -432,6 +481,7 @@ switch ($action) {
                             <th>Ур.</th>
                             <th>Роль</th>
                             <th>Статус</th>
+                            <th>Бан</th>
                             <th>Создан</th>
                             <th>Действия</th>
                         </tr>
@@ -443,19 +493,45 @@ switch ($action) {
                                 <td><?= htmlspecialchars($u['username']) ?></td>
                                 <td><?= htmlspecialchars($u['character_name'] ?? '—') ?></td>
                                 <td><?= $u['level'] ?? '—' ?></td>
-                                <td><?= htmlspecialchars($u['role_name'] ?? 'player') ?></td>
+                                <td>
+                                    <?php if (!empty($u['role_name'])): ?>
+                                        <span class="badge badge-active"><?= htmlspecialchars($u['role_name']) ?></span>
+                                    <?php else: ?>
+                                        <span class="badge">Игрок</span>
+                                    <?php endif; ?>
+                                </td>
                                 <td>
                                     <span class="badge <?= $u['is_active'] ? 'badge-active' : 'badge-inactive' ?>">
                                         <?= $u['is_active'] ? 'Активен' : 'Заблокирован' ?>
                                     </span>
                                 </td>
+                                <td>
+                                    <?php if (!empty($u['is_banned'])): ?>
+                                        <span class="badge badge-inactive" title="<?= htmlspecialchars($u['ban_reason'] ?? '') ?>">⛔</span>
+                                    <?php else: ?>
+                                        <span class="badge">OK</span>
+                                    <?php endif; ?>
+                                </td>
                                 <td><?= date('d.m.Y', strtotime($u['created_at'])) ?></td>
                                 <td>
-                                    <form method="POST" style="display:inline;">
-                                        <?= csrfField() ?>
-                                        <input type="hidden" name="toggle_active" value="1">
-                                        <button type="submit" class="btn btn-ghost"><?= $u['is_active'] ? '🔒' : '🔓' ?></button>
-                                    </form>
+                                    <div style="display: flex; gap: 5px;">
+                                        <?php if (hasPermission('ban')): ?>
+                                        <form method="POST" style="display:inline;" title="Бан/Разбан">
+                                            <?= csrfField() ?>
+                                            <input type="hidden" name="player_id" value="<?= $u['id'] ?>">
+                                            <input type="hidden" name="is_banned" value="<?= $u['is_banned'] ?? 0 ?>">
+                                            <button type="submit" name="toggle_ban" class="btn btn-ghost"><?= !empty($u['is_banned']) ? '✅' : '🔒' ?></button>
+                                        </form>
+                                        <?php endif; ?>
+                                        
+                                        <?php if (hasPermission('all')): ?>
+                                        <form method="POST" style="display:inline;" onsubmit="return confirm('Удалить игрока навсегда?')" title="Удалить">
+                                            <?= csrfField() ?>
+                                            <input type="hidden" name="delete_user" value="1">
+                                            <button type="submit" class="btn btn-ghost btn-red">🗑️</button>
+                                        </form>
+                                        <?php endif; ?>
+                                    </div>
                                 </td>
                             </tr>
                         <?php endforeach; ?>
@@ -878,24 +954,54 @@ switch ($action) {
         
         <?php case 'logs': ?>
             <div class="page-header">
-                <h1>📜 Логи</h1>
+                <h1>📜 Журнал аудита</h1>
+                <?php if (hasPermission('view_logs')): ?>
                 <form method="POST" style="display:inline; margin-left: 20px;">
                     <?= csrfField() ?>
                     <button type="submit" name="clear_logs" class="btn btn-red" onclick="return confirm('Очистить все логи?')">🗑️ Очистить</button>
                 </form>
+                <?php endif; ?>
             </div>
             <div class="card">
                 <table>
-                    <thead><tr><th>ID</th><th>Админ</th><th>Действие</th><th>Таблица</th><th>IP</th><th>Время</th></tr></thead>
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>Админ</th>
+                            <th>Действие</th>
+                            <th>Цель ID</th>
+                            <th>Детали</th>
+                            <th>IP</th>
+                            <th>Время</th>
+                        </tr>
+                    </thead>
                     <tbody>
                         <?php foreach ($items as $l): ?>
                             <tr>
                                 <td><?= $l['id'] ?></td>
-                                <td><?= htmlspecialchars($l['username'] ?? $l['admin_id']) ?></td>
-                                <td><?= htmlspecialchars($l['action']) ?></td>
-                                <td><?= htmlspecialchars($l['table_name']) ?></td>
-                                <td><?= htmlspecialchars($l['ip_address']) ?></td>
-                                <td><?= date('d.m.Y H:i', strtotime($l['created_at'])) ?></td>
+                                <td><?= htmlspecialchars($l['admin_name'] ?? $l['admin_id']) ?></td>
+                                <td>
+                                    <span class="badge"><?= htmlspecialchars($l['action']) ?></span>
+                                </td>
+                                <td><?= $l['target_id'] ?? '—' ?></td>
+                                <td>
+                                    <?php if (!empty($l['details'])): ?>
+                                        <?php 
+                                        $details = json_decode($l['details'], true);
+                                        if ($details): 
+                                        ?>
+                                            <code style="font-size: 11px;">
+                                            <?php foreach ($details as $k => $v): ?>
+                                                <?= htmlspecialchars($k) ?>: <?= is_array($v) ? json_encode($v) : htmlspecialchars((string)$v) ?>; 
+                                            <?php endforeach; ?>
+                                            </code>
+                                        <?php endif; ?>
+                                    <?php else: ?>
+                                        —
+                                    <?php endif; ?>
+                                </td>
+                                <td><code><?= htmlspecialchars($l['ip_address']) ?></code></td>
+                                <td><?= date('d.m.Y H:i:s', strtotime($l['created_at'])) ?></td>
                             </tr>
                         <?php endforeach; ?>
                     </tbody>

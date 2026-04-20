@@ -81,6 +81,9 @@ try {
                     <span class="stat-label">💰</span>
                     <span class="stat-value"><?= (int)($player['caps'] ?? 0) ?></span>
                 </div>
+                <div class="stat-item">
+                    <a href="/logout.php" class="logout-btn" title="Выйти из сессии">🚪 ВЫХОД</a>
+                </div>
             </div>
         </header>
 
@@ -103,8 +106,26 @@ try {
                 <button class="nav-btn" onclick="showPanel('map')" id="btn-map">
                     🗺️
                 </button>
+                <button class="nav-btn" onclick="showPanel('quests')" id="btn-quests">
+                    📋
+                </button>
+                <button class="nav-btn" onclick="showPanel('vendors')" id="btn-vendors">
+                    💰
+                </button>
+                <button class="nav-btn" onclick="showPanel('crafting')" id="btn-crafting">
+                    🔨
+                </button>
                 <button class="nav-btn" onclick="showPanel('history')" id="btn-history">
                     📜
+                </button>
+                <button class="nav-btn" onclick="showPanel('factions')" id="btn-factions">
+                    🎖️
+                </button>
+                <button class="nav-btn" onclick="showPanel('dungeons')" id="btn-dungeons">
+                    🏰
+                </button>
+                <button class="nav-btn" onclick="showPanel('fasttravel')" id="btn-fasttravel">
+                    ⚡
                 </button>
             </nav>
 
@@ -204,12 +225,54 @@ try {
                     </div>
                 </div>
 
+                <div class="panel-content hidden" id="panel-quests">
+                    <h2 class="panel-title">📋 КВЕСТЫ</h2>
+                    <div class="quests-list" id="quests-list">
+                        <div class="loading">Загрузка квестов...</div>
+                    </div>
+                </div>
+
+                <div class="panel-content hidden" id="panel-vendors">
+                    <h2 class="panel-title">💰 ТОРГОВЦЫ</h2>
+                    <div class="vendors-list" id="vendors-list">
+                        <div class="loading">Загрузка торговцев...</div>
+                    </div>
+                </div>
+
+                <div class="panel-content hidden" id="panel-crafting">
+                    <h2 class="panel-title">🔨 КРАФТ</h2>
+                    <div class="crafting-list" id="crafting-list">
+                        <div class="loading">Загрузка рецептов...</div>
+                    </div>
+                </div>
+
                 <div class="panel-content hidden" id="panel-history">
                     <h2 class="panel-title">📜 ЖУРНАЛ</h2>
                     <div class="history-log" id="history-log">
                         <div class="log-entry">
                             <small>[<?= date('H:i') ?>]</small> Добро пожаловать в Пустошь, Избранный.
                         </div>
+                    </div>
+                </div>
+
+                <div class="panel-content hidden" id="panel-factions">
+                    <h2 class="panel-title">🎖️ ФРАКЦИИ</h2>
+                    <div class="factions-list" id="factions-list">
+                        <div class="loading">Загрузка фракций...</div>
+                    </div>
+                </div>
+
+                <div class="panel-content hidden" id="panel-dungeons">
+                    <h2 class="panel-title">🏰 ПОДЗЕМЕЛЬЯ</h2>
+                    <div class="dungeons-list" id="dungeons-list">
+                        <div class="loading">Загрузка подземелий...</div>
+                    </div>
+                </div>
+
+                <div class="panel-content hidden" id="panel-fasttravel">
+                    <h2 class="panel-title">⚡ БЫСТРОЕ ПЕРЕМЕЩЕНИЕ</h2>
+                    <div class="fasttravel-list" id="fasttravel-list">
+                        <div class="loading">Загрузка точек...</div>
                     </div>
                 </div>
             </div>
@@ -304,9 +367,22 @@ try {
 
             if (name === 'inventory') loadInventory();
             if (name === 'map') loadMap();
+            if (name === 'quests') loadQuests();
+            if (name === 'vendors') loadVendors();
+            if (name === 'crafting') loadCrafting();
+            if (name === 'factions') loadFactions();
+            if (name === 'dungeons') loadDungeons();
+            if (name === 'fasttravel') loadFastTravel();
         }
 
+        // Глобальное состояние боя - нельзя двигаться во время боя
+        let inCombat = false;
+
         function move(dx, dy) {
+            if (inCombat) {
+                showAlert('⚠️ Нельзя уйти во время боя!');
+                return;
+            }
             fetch('/api/move.php', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
@@ -339,6 +415,10 @@ try {
         }
 
         function performSearch() {
+            if (inCombat) {
+                showAlert('⚠️ Нельзя искать во время боя!');
+                return;
+            }
             fetch('/api/search.php', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'}
@@ -366,7 +446,10 @@ try {
                     if (data.success && data.inventory && data.inventory.length > 0) {
                         let html = '<ul class="inv-items">';
                         data.inventory.forEach(item => {
-                            html += `<li class="inv-item">${item.name || item.item_key} <span class="inv-qty">x${item.quantity}</span></li>`;
+                            const scrapBtn = item.item_type === 'loot' || item.item_type === 'weapon' || item.item_type === 'armor' 
+                                ? `<button class="scrap-btn" onclick="scrapItem(${item.id}, '${item.item_key.replace(/'/g, "\\'")}')">🗑️</button>` 
+                                : '';
+                            html += `<li class="inv-item">${item.name || item.item_key} <span class="inv-qty">x${item.quantity}</span> ${scrapBtn}</li>`;
                         });
                         html += '</ul>';
                         div.innerHTML = html;
@@ -374,6 +457,26 @@ try {
                         div.innerHTML = '<p class="empty">Инвентарь пуст</p>';
                     }
                 });
+        }
+
+        function scrapItem(itemId, itemKey) {
+            if (!confirm('Удалить этот предмет?')) return;
+            const formData = new FormData();
+            formData.append('action', 'scrap');
+            formData.append('item_id', itemId);
+            fetch('/api/inventory.php', {
+                method: 'POST',
+                body: formData
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    addLog(data.message);
+                    loadInventory();
+                } else {
+                    showAlert(data.error || 'Ошибка удаления');
+                }
+            });
         }
 
         function loadMap() {
@@ -407,6 +510,7 @@ try {
         }
 
         function startCombat(monster) {
+            inCombat = true;
             currentCombatId = null;
             document.getElementById('combat-monster-name').textContent = monster.name || 'Враг';
             document.getElementById('monster-hp-text').textContent = `${monster.hp}/${monster.max_hp}`;
@@ -450,6 +554,14 @@ try {
                     setTimeout(() => closeCombat(), 2000);
                 } else if (data.enemy_response) {
                     log.innerHTML += '<div class="combat-log-entry damage">' + (data.enemy_response.message || '') + '</div>';
+                    // Обновляем HP игрока после атаки врага
+                    if (data.player_hp !== undefined) {
+                        playerHP = data.player_hp;
+                        playerMaxHP = data.player_max_hp || playerMaxHP;
+                        const hpPct = Math.max(0, Math.min(100, (playerHP / playerMaxHP) * 100));
+                        document.getElementById('hp-fill').style.width = hpPct + '%';
+                        document.querySelector('.bar-value').textContent = `${playerHP}/${playerMaxHP}`;
+                    }
                     if (data.enemy_response.player_dead) {
                         log.innerHTML += '<div class="combat-log-entry death">💀 Поражение...</div>';
                         addLog('💀 Вы погибли...');
@@ -474,7 +586,21 @@ try {
                     addLog('🏃 Вы сбежали от врага');
                     setTimeout(() => closeCombat(), 1000);
                 } else {
-                    log.innerHTML += '<div class="combat-log-entry">' + (data.message || 'Не удалось сбежать!') + '</div>';
+                    log.innerHTML += '<div class="combat-log-entry damage">' + (data.message || 'Не удалось сбежать!') + '</div>';
+                    // Обновляем HP игрока после неудачного побега
+                    if (data.player_hp !== undefined) {
+                        playerHP = data.player_hp;
+                        playerMaxHP = data.player_max_hp || playerMaxHP;
+                        const hpPct = Math.max(0, Math.min(100, (playerHP / playerMaxHP) * 100));
+                        document.getElementById('hp-fill').style.width = hpPct + '%';
+                        document.querySelector('.bar-value').textContent = `${playerHP}/${playerMaxHP}`;
+                    }
+                    // Проверяем смерть игрока
+                    if (data.player_dead) {
+                        log.innerHTML += '<div class="combat-log-entry death">💀 Вас убили при попытке побега...</div>';
+                        addLog('💀 Вы погибли...');
+                        setTimeout(() => location.reload(), 3000);
+                    }
                 }
             });
         }
@@ -482,10 +608,12 @@ try {
         function closeCombat() {
             document.getElementById('combat-modal').classList.add('hidden');
             currentCombatId = null;
+            inCombat = false;
         }
 
         function showFound(item) {
-            document.getElementById('found-title').textContent = '📦 ' + item.name;
+            const title = item.rarity ? item.rarity + ': ' + item.name : '📦 ' + item.name;
+            document.getElementById('found-title').textContent = title;
             document.getElementById('found-message').textContent = 'Найдено: ' + item.name + ' x' + item.quantity;
             document.getElementById('found-modal').classList.remove('hidden');
         }
@@ -505,6 +633,476 @@ try {
 
         function showAlert(msg) {
             addLog('<span style="color:#ff6666">⚠️ ' + msg + '</span>');
+        }
+
+        // Загрузка квестов
+        function loadQuests() {
+            fetch('/api/quests.php?action=list')
+                .then(r => r.json())
+                .then(data => {
+                    const container = document.getElementById('quests-list');
+                    if (!container) return;
+                    
+                    if (data.error) {
+                        container.innerHTML = '<div class="error">' + data.error + '</div>';
+                        return;
+                    }
+                    
+                    if (!data.quests || data.quests.length === 0) {
+                        container.innerHTML = '<div class="empty">Нет активных квестов</div>';
+                        return;
+                    }
+                    
+                    let html = '';
+                    data.quests.forEach(q => {
+                        const statusClass = q.status === 'completed' ? 'quest-completed' : (q.status === 'failed' ? 'quest-failed' : 'quest-active');
+                        const statusText = q.status === 'completed' ? '✅ Завершен' : (q.status === 'failed' ? '❌ Провален' : '📝 В процессе');
+                        html += `<div class="quest-item ${statusClass}">
+                            <div class="quest-title">${q.title}</div>
+                            <div class="quest-desc">${q.description}</div>
+                            <div class="quest-status">${statusText}</div>
+                            <div class="quest-progress">Прогресс: ${q.progress}/${q.target}</div>`;
+                        
+                        if (q.status === 'active' && q.can_complete) {
+                            html += `<button class="quest-btn" onclick="completeQuest(${q.id})">🎁 Завершить</button>`;
+                        }
+                        if (q.status === 'available' && !q.started) {
+                            html += `<button class="quest-btn" onclick="startQuest(${q.id})">▶️ Начать</button>`;
+                        }
+                        html += '</div>';
+                    });
+                    container.innerHTML = html;
+                })
+                .catch(e => {
+                    document.getElementById('quests-list').innerHTML = '<div class="error">Ошибка загрузки квестов</div>';
+                });
+        }
+
+        function startQuest(questId) {
+            fetch('/api/quests.php', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ action: 'start', quest_id: questId })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    addLog('📋 Квест получен: ' + data.message);
+                    loadQuests();
+                } else {
+                    showAlert(data.error || 'Ошибка начала квеста');
+                }
+            })
+            .catch(e => showAlert('Ошибка сети'));
+        }
+
+        function completeQuest(questId) {
+            fetch('/api/quests.php', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ action: 'complete', quest_id: questId })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    addLog('🎉 Квест завершен! ' + data.message);
+                    if (data.caps) addLog('💰 Получено крышек: ' + data.caps);
+                    if (data.xp) addLog('⭐ Получено опыта: ' + data.xp);
+                    loadQuests();
+                } else {
+                    showAlert(data.error || 'Ошибка завершения квеста');
+                }
+            })
+            .catch(e => showAlert('Ошибка сети'));
+        }
+
+        // Загрузка торговцев
+        function loadVendors() {
+            fetch('/api/vendor.php?action=list')
+                .then(r => r.json())
+                .then(data => {
+                    const container = document.getElementById('vendors-list');
+                    if (!container) return;
+                    
+                    if (data.error) {
+                        container.innerHTML = '<div class="error">' + data.error + '</div>';
+                        return;
+                    }
+                    
+                    if (!data.vendors || data.vendors.length === 0) {
+                        container.innerHTML = '<div class="empty">Нет доступных торговцев</div>';
+                        return;
+                    }
+                    
+                    let html = '';
+                    data.vendors.forEach(v => {
+                        html += `<div class="vendor-item">
+                            <div class="vendor-name">${v.name}</div>
+                            <div class="vendor-location">📍 ${v.location}</div>
+                            <div class="vendor-gold">💰 У него: ${v.caps} крышек</div>
+                            <button class="vendor-btn" onclick="openVendorTrade(${v.id})">💬 Торговать</button>
+                        </div>`;
+                    });
+                    container.innerHTML = html;
+                })
+                .catch(e => {
+                    document.getElementById('vendors-list').innerHTML = '<div class="error">Ошибка загрузки торговцев</div>';
+                });
+        }
+
+        function openVendorTrade(vendorId) {
+            Promise.all([
+                fetch('/api/vendor.php?action=inventory&vendor_id=' + vendorId).then(r => r.json()),
+                fetch('/api/inventory.php').then(r => r.json())
+            ])
+            .then(([vendorData, playerData]) => {
+                if (vendorData.error) {
+                    showAlert(vendorData.error);
+                    return;
+                }
+                
+                let html = '<div class="trade-container">';
+                html += '<div class="trade-section"><h3>📦 Товары торговца</h3><div class="trade-items">';
+                
+                if (vendorData.items && vendorData.items.length > 0) {
+                    vendorData.items.forEach(item => {
+                        html += `<div class="trade-item">
+                            <span>${item.name}</span>
+                            <span class="trade-price">💰 ${item.price}</span>
+                            <button onclick="buyItem(${vendorId}, ${item.item_id}, ${item.price})">Купить</button>
+                        </div>`;
+                    });
+                } else {
+                    html += '<div class="empty">Нет товаров</div>';
+                }
+                
+                html += '</div></div><div class="trade-section"><h3>🎒 Ваш инвентарь</h3><div class="trade-items">';
+                
+                if (playerData.items && playerData.items.length > 0) {
+                    playerData.items.filter(i => i.type_id !== 5).forEach(item => {
+                        const sellPrice = Math.floor((item.base_value || 1) * 0.5);
+                        html += `<div class="trade-item">
+                            <span>${item.name}</span>
+                            <span class="trade-price">💰 ${sellPrice}</span>
+                            <button onclick="sellItem(${vendorId}, ${item.id}, ${sellPrice})">Продать</button>
+                        </div>`;
+                    });
+                } else {
+                    html += '<div class="empty">Пусто</div>';
+                }
+                
+                html += '</div></div></div>';
+                
+                showTradeModal(html);
+            })
+            .catch(e => showAlert('Ошибка загрузки торговли'));
+        }
+
+        function buyItem(vendorId, itemId, price) {
+            fetch('/api/vendor.php', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ action: 'buy', vendor_id: vendorId, item_id: itemId, price: price })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    addLog('🛒 Куплено: ' + data.item_name + ' за ' + price + ' крышек');
+                    openVendorTrade(vendorId);
+                    updatePlayerStats(data.player);
+                } else {
+                    showAlert(data.error || 'Ошибка покупки');
+                }
+            })
+            .catch(e => showAlert('Ошибка сети'));
+        }
+
+        function sellItem(vendorId, itemId, price) {
+            fetch('/api/vendor.php', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ action: 'sell', vendor_id: vendorId, item_id: itemId, price: price })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    addLog('💰 Продано: ' + data.item_name + ' за ' + price + ' крышек');
+                    openVendorTrade(vendorId);
+                    updatePlayerStats(data.player);
+                } else {
+                    showAlert(data.error || 'Ошибка продажи');
+                }
+            })
+            .catch(e => showAlert('Ошибка сети'));
+        }
+
+        function showTradeModal(content) {
+            const modal = document.createElement('div');
+            modal.id = 'trade-modal';
+            modal.className = 'modal';
+            modal.innerHTML = `<div class="found-container">
+                <h2>💱 ТОРГОВЛЯ</h2>
+                ${content}
+                <button class="modal-close" onclick="this.closest('.modal').remove()">ЗАКРЫТЬ</button>
+            </div>`;
+            document.body.appendChild(modal);
+        }
+
+        function updatePlayerStats(player) {
+            if (player.caps !== undefined) {
+                document.querySelectorAll('.stat-value').forEach(el => {
+                    if (el.previousElementSibling?.textContent === '💰') {
+                        el.textContent = player.caps;
+                    }
+                });
+                document.querySelectorAll('.caps-display').forEach(el => {
+                    el.textContent = '💰 ' + player.caps;
+                });
+            }
+            if (player.hp !== undefined) {
+                playerHP = player.hp;
+                playerMaxHP = player.max_hp || playerMaxHP;
+                const hpPercent = Math.max(0, Math.min(100, (playerHP / playerMaxHP) * 100));
+                document.getElementById('hp-fill').style.width = hpPercent + '%';
+                document.querySelector('.bar-value').textContent = playerHP + '/' + playerMaxHP;
+            }
+        }
+
+        // Загрузка крафта
+        function loadCrafting() {
+            fetch('/api/crafting.php?action=recipes')
+                .then(r => r.json())
+                .then(data => {
+                    const container = document.getElementById('crafting-list');
+                    if (!container) return;
+                    
+                    if (data.error) {
+                        container.innerHTML = '<div class="error">' + data.error + '</div>';
+                        return;
+                    }
+                    
+                    if (!data.recipes || data.recipes.length === 0) {
+                        container.innerHTML = '<div class="empty">Нет доступных рецептов</div>';
+                        return;
+                    }
+                    
+                    let html = '';
+                    data.recipes.forEach(recipe => {
+                        const canCraft = recipe.can_craft ? '' : 'disabled';
+                        const missingIngredients = recipe.missing ? ` <small class="missing">(${recipe.missing})</small>` : '';
+                        html += `<div class="crafting-item ${recipe.can_craft ? 'can-craft' : 'cant-craft'}">
+                            <div class="crafting-name">${recipe.output_name}</div>
+                            <div class="crafting-reqs">Требуется: ${recipe.ingredients}${missingIngredients}</div>
+                            <div class="crafting-result">Результат: ${recipe.result_desc}</div>
+                            <button class="craft-btn" ${canCraft} onclick="craftItem(${recipe.id})">🔨 Создать</button>
+                        </div>`;
+                    });
+                    container.innerHTML = html;
+                })
+                .catch(e => {
+                    document.getElementById('crafting-list').innerHTML = '<div class="error">Ошибка загрузки рецептов</div>';
+                });
+        }
+
+        function craftItem(recipeId) {
+            fetch('/api/crafting.php', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ action: 'craft', recipe_id: recipeId })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    addLog('🔨 Создано: ' + data.output_name);
+                    loadCrafting();
+                    loadInventory();
+                } else {
+                    showAlert(data.error || 'Ошибка крафта');
+                }
+            })
+            .catch(e => showAlert('Ошибка сети'));
+        }
+
+        // Загрузка фракций
+        function loadFactions() {
+            fetch('/api/factions.php?action=get_status')
+                .then(r => r.json())
+                .then(data => {
+                    const container = document.getElementById('factions-list');
+                    if (!container) return;
+                    
+                    if (data.error) {
+                        container.innerHTML = '<div class="error">' + data.error + '</div>';
+                        return;
+                    }
+                    
+                    if (!data.factions || data.factions.length === 0) {
+                        container.innerHTML = '<div class="empty">Нет данных о фракциях</div>';
+                        return;
+                    }
+                    
+                    let html = '';
+                    data.factions.forEach(f => {
+                        const repColor = f.reputation >= 500 ? '#4CAF50' : (f.reputation >= 100 ? '#8BC34A' : (f.reputation >= -100 ? '#FFC107' : (f.reputation >= -500 ? '#F44336' : '#B71C1C')));
+                        const repBarWidth = Math.min(100, Math.max(0, ((f.reputation + 1000) / 2000) * 100));
+                        html += `<div class="faction-item" style="border-left: 4px solid ${f.color_code}">
+                            <div class="faction-name">${f.name}</div>
+                            <div class="faction-desc">${f.description}</div>
+                            <div class="faction-rank">Ранг: <strong>${f.rank_title}</strong></div>
+                            <div class="faction-rep">Репутация: <span style="color:${repColor}">${f.reputation}</span></div>
+                            <div class="rep-bar-container"><div class="rep-bar-fill" style="width:${repBarWidth}%;background:${repColor}"></div></div>
+                        </div>`;
+                    });
+                    container.innerHTML = html;
+                })
+                .catch(e => {
+                    document.getElementById('factions-list').innerHTML = '<div class="error">Ошибка загрузки фракций</div>';
+                });
+        }
+
+        // Загрузка подземелий
+        function loadDungeons() {
+            fetch('/api/dungeons.php?action=get_dungeons')
+                .then(r => r.json())
+                .then(data => {
+                    const container = document.getElementById('dungeons-list');
+                    if (!container) return;
+                    
+                    if (data.error) {
+                        container.innerHTML = '<div class="error">' + data.error + '</div>';
+                        return;
+                    }
+                    
+                    if (!data.dungeons || data.dungeons.length === 0) {
+                        container.innerHTML = '<div class="empty">Нет доступных подземелий</div>';
+                        return;
+                    }
+                    
+                    let html = '';
+                    data.dungeons.forEach(d => {
+                        const typeIcon = d.location_type === 'boss_arena' ? '👹' : '💀';
+                        const accessible = d.accessible ? '' : 'disabled';
+                        const reqLevel = d.accessible ? '' : ` <small class="missing">(требуется ${d.min_level} ур.)</small>`;
+                        const discovered = d.discovered > 0 ? '✅' : '🔒';
+                        const bossInfo = d.boss_info ? `<div class="dungeon-boss">Босс: ${d.boss_info.name} (ур.${d.boss_info.level})</div>` : '';
+                        
+                        html += `<div class="dungeon-item ${d.accessible ? 'accessible' : 'locked'}">
+                            <div class="dungeon-header">${typeIcon} ${d.name} ${discovered}${reqLevel}</div>
+                            <div class="dungeon-desc">${d.description || 'Описание отсутствует'}</div>
+                            ${bossInfo}
+                            <button class="dungeon-btn" ${accessible} onclick="enterDungeon(${d.id})">⚔️ Войти</button>
+                        </div>`;
+                    });
+                    container.innerHTML = html;
+                })
+                .catch(e => {
+                    document.getElementById('dungeons-list').innerHTML = '<div class="error">Ошибка загрузки подземелий</div>';
+                });
+        }
+
+        function enterDungeon(locationId) {
+            fetch('/api/dungeons.php', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ action: 'enter_dungeon', location_id: locationId })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    if (data.combat) {
+                        addLog('👹 БОСС: ' + data.data.monster.name);
+                        startCombat(data.data.monster);
+                    } else {
+                        addLog(data.message);
+                        // Симуляция прохождения подземелья
+                        setTimeout(() => completeDungeon(locationId), 3000);
+                    }
+                } else {
+                    showAlert(data.error || 'Ошибка входа в подземелье');
+                }
+            })
+            .catch(e => showAlert('Ошибка сети'));
+        }
+
+        function completeDungeon(locationId) {
+            fetch('/api/dungeons.php', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ action: 'complete_dungeon', location_id: locationId })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    addLog(data.message + data.loot_message);
+                    addLog('💰 Крышек: +' + data.rewards.caps);
+                    addLog('⭐ Опыта: +' + data.rewards.xp);
+                    loadDungeons();
+                } else {
+                    showAlert(data.error || 'Ошибка завершения подземелья');
+                }
+            })
+            .catch(e => showAlert('Ошибка сети'));
+        }
+
+        // Загрузка точек быстрого перемещения
+        function loadFastTravel() {
+            fetch('/api/fast_travel.php?action=get_points')
+                .then(r => r.json())
+                .then(data => {
+                    const container = document.getElementById('fasttravel-list');
+                    if (!container) return;
+                    
+                    if (data.error) {
+                        container.innerHTML = '<div class="error">' + data.error + '</div>';
+                        return;
+                    }
+                    
+                    if (!data.points || data.points.length === 0) {
+                        container.innerHTML = '<div class="empty">Нет открытых точек быстрого перемещения</div><p class="hint">Посещайте новые локации чтобы открывать точки</p>';
+                        return;
+                    }
+                    
+                    let html = '';
+                    data.points.forEach(p => {
+                        html += `<div class="fasttravel-item">
+                            <div class="fasttravel-name">📍 ${p.name}</div>
+                            <div class="fasttravel-coords">Координаты: (${p.x}, ${p.y})</div>
+                            <div class="fasttravel-desc">${p.description || ''}</div>
+                            <button class="travel-btn" onclick="travelTo(${p.id})">⚡ Телепорт (10 💰)</button>
+                        </div>`;
+                    });
+                    container.innerHTML = html;
+                })
+                .catch(e => {
+                    document.getElementById('fasttravel-list').innerHTML = '<div class="error">Ошибка загрузки точек</div>';
+                });
+        }
+
+        function travelTo(locationId) {
+            if (inCombat) {
+                showAlert('⚠️ Нельзя телепортироваться во время боя!');
+                return;
+            }
+            if (!confirm('Телепортироваться за 10 крышек?')) return;
+            
+            fetch('/api/fast_travel.php', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ action: 'travel', location_id: locationId })
+            })
+            .then(r => r.json())
+            .then(data => {
+                if (data.success) {
+                    addLog(data.message);
+                    posX = data.new_position.x;
+                    posY = data.new_position.y;
+                    updateLocation({pos_x: posX, pos_y: posY, location_name: data.message});
+                    loadFastTravel();
+                } else {
+                    showAlert(data.error || 'Ошибка телепортации');
+                }
+            })
+            .catch(e => showAlert('Ошибка сети'));
         }
 
         showPanel('status');
