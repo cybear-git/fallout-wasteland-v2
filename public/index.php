@@ -62,7 +62,7 @@ try {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
     <title>PIP-BOY 3000 | Fallout Wasteland</title>
-    <link rel="stylesheet" href="/assets/css/pipboy.css">
+    <link rel="stylesheet" href="/assets/css/game.css">
 </head>
 <body class="pipboy-body">
     <div class="pipboy-container">
@@ -1107,5 +1107,8 @@ try {
 
         showPanel('status');
     </script>
+    
+    <!-- Подключаем внешний JS файл -->
+    <script src="/assets/js/game.js"></script>
 </body>
 </html>

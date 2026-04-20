@@ -1,17 +1,21 @@
 /* ============================================
    PIP-BOY 3000 STYLE GUIDE
    Fallout RPG - Монохромный ЭЛТ-интерфейс
+   Улучшенная версия с анимациями и эффектами
    ============================================ */
 
 :root {
     --pipboy-green: #4caf50;
     --pipboy-bright: #66ff66;
-    --pipboy-dark: #1a2f1a;
-    --pipboy-bg: #0a0f0a;
+    --pipboy-dim: #2d5a2d;
+    --pipboy-dark: #0a140a;
+    --pipboy-bg: #050a05;
     --pipboy-border: #3d5c3d;
-    --pipboy-shadow: rgba(76, 175, 80, 0.5);
+    --pipboy-glow: rgba(76, 175, 80, 0.6);
+    --pipboy-shadow: rgba(76, 175, 80, 0.3);
     --pipboy-warning: #ffcc00;
     --pipboy-danger: #ff6666;
+    --pipboy-crt-scanline: rgba(0, 0, 0, 0.12);
 }
 
 * {
@@ -26,9 +30,11 @@ body.pipboy-body {
     font-family: 'Courier New', monospace;
     min-height: 100vh;
     overflow-x: hidden;
+    text-shadow: 0 0 4px var(--pipboy-shadow);
+    letter-spacing: 0.5px;
 }
 
-/* ЭЛТ-эффект (scanlines) */
+/* Улучшенный ЭЛТ-эффект (scanlines) с анимацией */
 body.pipboy-body::before {
     content: '';
     position: fixed;
@@ -38,13 +44,32 @@ body.pipboy-body::before {
     height: 100%;
     background: repeating-linear-gradient(
         0deg,
-        rgba(0, 0, 0, 0.15),
-        rgba(0, 0, 0, 0.15) 1px,
+        var(--pipboy-crt-scanline),
+        var(--pipboy-crt-scanline) 1px,
         transparent 1px,
         transparent 2px
     );
     pointer-events: none;
     z-index: 9999;
+    animation: scanlineMove 8s linear infinite;
+}
+
+@keyframes scanlineMove {
+    0% { transform: translateY(0); }
+    100% { transform: translateY(4px); }
+}
+
+/* Виньетка экрана */
+body.pipboy-body::after {
+    content: '';
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: radial-gradient(ellipse at center, transparent 50%, rgba(0, 0, 0, 0.6) 100%);
+    pointer-events: none;
+    z-index: 9998;
 }
 
 .container {
@@ -376,21 +401,187 @@ body.pipboy-body::before {
 }
 
 /* ============================================
-   ANIMATIONS
+   ANIMATIONS & EFFECTS
    ============================================ */
 @keyframes flicker {
-    0%, 100% { opacity: 1; }
-    5% { opacity: 0.8; }
+    0%, 100% { opacity: 1; text-shadow: 0 0 8px var(--pipboy-glow); }
+    5% { opacity: 0.85; }
     10% { opacity: 1; }
     15% { opacity: 0.9; }
-    50% { opacity: 1; }
-    55% { opacity: 0.7; }
+    50% { opacity: 1; text-shadow: 0 0 12px var(--pipboy-glow); }
+    55% { opacity: 0.75; }
     60% { opacity: 1; }
 }
 
 @keyframes blink {
     0%, 100% { opacity: 1; }
-    50% { opacity: 0.5; }
+    50% { opacity: 0.4; }
+}
+
+@keyframes pulse {
+    0%, 100% { transform: scale(1); opacity: 1; }
+    50% { transform: scale(1.05); opacity: 0.8; }
+}
+
+@keyframes glow {
+    0%, 100% { box-shadow: 0 0 5px var(--pipboy-shadow), inset 0 0 10px rgba(0,0,0,0.3); }
+    50% { box-shadow: 0 0 20px var(--pipboy-glow), inset 0 0 20px rgba(76,175,80,0.1); }
+}
+
+@keyframes slideIn {
+    from { transform: translateX(-20px); opacity: 0; }
+    to { transform: translateX(0); opacity: 1; }
+}
+
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+
+@keyframes crtTurnOn {
+    0% { transform: scaleY(0.001); opacity: 0; }
+    50% { transform: scaleY(0.001); opacity: 1; }
+    100% { transform: scaleY(1); opacity: 1; }
+}
+
+/* CRT turn-on effect class */
+.crt-turn-on {
+    animation: crtTurnOn 0.5s ease-out;
+}
+
+/* Panel transitions */
+.panel-content {
+    transition: opacity 0.3s ease, transform 0.3s ease;
+}
+
+.panel-content.hidden {
+    display: none !important;
+}
+
+/* Button hover effects */
+.btn-move, .cross-btn, .nav-btn {
+    transition: all 0.2s ease;
+}
+
+.btn-move:hover:not(:disabled),
+.cross-btn:hover:not(:disabled),
+.nav-btn:hover:not(:disabled) {
+    transform: scale(1.1);
+    box-shadow: 0 0 15px var(--pipboy-glow);
+}
+
+/* Inventory item hover */
+.inv-item {
+    transition: all 0.2s ease;
+}
+
+.inv-item:hover {
+    background: rgba(76, 175, 80, 0.15);
+    transform: translateX(5px);
+}
+
+/* Combat log animations */
+.combat-log-entry {
+    animation: slideIn 0.3s ease;
+}
+
+/* Alert toast animations */
+.alert-toast {
+    animation: slideIn 0.3s ease, fadeIn 0.3s ease;
+}
+
+/* XP gain overlay */
+.xp-gain-overlay {
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    font-size: 48px;
+    font-weight: bold;
+    color: var(--pipboy-warning);
+    text-shadow: 0 0 20px var(--pipboy-glow);
+    z-index: 10000;
+    animation: fadeIn 0.3s ease, pulse 0.5s ease infinite;
+    pointer-events: none;
+}
+
+/* Low HP warning pulse */
+.shock-warning {
+    animation: blink 0.5s infinite;
+}
+
+/* Map cell hover effect */
+.map-cell {
+    transition: all 0.15s ease;
+}
+
+.map-cell:hover {
+    transform: scale(1.2);
+    z-index: 10;
+    box-shadow: 0 0 10px var(--pipboy-glow);
+}
+
+/* Quest status badges */
+.quest-item {
+    border-left: 3px solid var(--pipboy-border);
+    padding-left: 12px;
+    margin-bottom: 12px;
+    transition: all 0.2s ease;
+}
+
+.quest-item.active {
+    border-left-color: var(--pipboy-warning);
+}
+
+.quest-item.completed {
+    border-left-color: var(--pipboy-green);
+    opacity: 0.7;
+}
+
+.quest-item.failed {
+    border-left-color: var(--pipboy-danger);
+    opacity: 0.5;
+}
+
+/* Faction reputation stars */
+.faction-reputation {
+    color: var(--pipboy-warning);
+    letter-spacing: 2px;
+}
+
+/* Loading state animation */
+.loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 20px;
+}
+
+.loading::after {
+    content: '';
+    width: 16px;
+    height: 16px;
+    border: 2px solid var(--pipboy-border);
+    border-top-color: var(--pipboy-bright);
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+    to { transform: rotate(360deg); }
+}
+
+/* Empty state styling */
+.empty-state, .error-state {
+    text-align: center;
+    padding: 40px 20px;
+    color: var(--pipboy-dim);
+    font-style: italic;
+}
+
+.error-state {
+    color: var(--pipboy-danger);
 }
 
 /* ============================================
@@ -419,5 +610,31 @@ body.pipboy-body::before {
         width: 50px;
         height: 50px;
         font-size: 20px;
+    }
+    
+    /* Hide some decorative elements on mobile */
+    body.pipboy-body::before {
+        opacity: 0.5;
+    }
+}
+
+/* High contrast mode support */
+@media (prefers-contrast: high) {
+    :root {
+        --pipboy-shadow: rgba(76, 175, 80, 0.8);
+        --pipboy-glow: rgba(76, 175, 80, 1);
+    }
+    
+    .panel, .pipboy-container {
+        border-width: 3px;
+    }
+}
+
+/* Reduced motion support */
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
     }
 }
