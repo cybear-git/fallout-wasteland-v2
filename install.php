@@ -59,7 +59,7 @@ try {
 $transactionStarted = false;
 
 try {
-    // 1. Drop and Create Database
+    // 1. Drop and Create Database (outside transaction)
     echo "🗑️  Dropping existing database (if any)... ";
     $pdo->exec("DROP DATABASE IF EXISTS `$dbName`");
     echo "\033[32mDone\033[0m\n";
@@ -71,8 +71,9 @@ try {
     // Reconnect to the new database
     $dsnDb = "mysql:host=$dbHost;port=$dbPort;dbname=$dbName;charset=$charset";
     $pdo = new PDO($dsnDb, $dbUser, $dbPass, $options);
+    $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
     
-    // 2. Start Transaction
+    // 2. Start Transaction (after reconnecting to new database)
     echo "💾 Starting transaction... ";
     $pdo->beginTransaction();
     $transactionStarted = true;
@@ -329,14 +330,14 @@ try {
                 $desc = "Your starting home. Safe zone.";
                 $danger = 1;
                 $loot = 1;
-                $safe = true;
+                $safe = 1; // Explicit integer for is_safe column
             } elseif ($distFromCenter <= 2) {
                 $name = "Wasteland Outskirts";
                 $type = "wilderness";
                 $desc = "Relatively safe area near home.";
                 $danger = 2;
                 $loot = 2;
-                $safe = false;
+                $safe = 0; // Explicit integer for is_safe column
             } elseif ($distFromCenter <= 5) {
                 $names = ["Ruined Highway", "Abandoned Farm", "Crater", "Radstorm Zone"];
                 $name = $names[array_rand($names)];
@@ -344,7 +345,7 @@ try {
                 $desc = "Dangerous open wasteland.";
                 $danger = 4;
                 $loot = 3;
-                $safe = false;
+                $safe = 0; // Explicit integer for is_safe column
             } else {
                 $names = ["Super Mutant Camp", "Raiders Hideout", "Ghoul Infested Subway", "Mirelurk Nest"];
                 $name = $names[array_rand($names)];
@@ -352,7 +353,7 @@ try {
                 $desc = "High danger zone with potential high rewards.";
                 $danger = 7;
                 $loot = 5;
-                $safe = false;
+                $safe = 0; // Explicit integer for is_safe column
             }
 
             $stmtLoc->execute([$name, $desc, $type, $x, $y, $danger, $loot, $safe]);
