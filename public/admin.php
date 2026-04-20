@@ -106,9 +106,9 @@ $stats = [
     'players' => $pdo->query("SELECT COUNT(*) FROM players")->fetchColumn(),
     'characters' => $pdo->query("SELECT COUNT(*) FROM characters")->fetchColumn(),
     'monsters' => $pdo->query("SELECT COUNT(*) FROM monsters WHERE is_active=1")->fetchColumn(),
-    'weapons' => $pdo->query("SELECT COUNT(*) FROM weapons WHERE is_active=1")->fetchColumn(),
-    'armors' => $pdo->query("SELECT COUNT(*) FROM armors WHERE is_active=1")->fetchColumn(),
-    'consumables' => $pdo->query("SELECT COUNT(*) FROM consumables WHERE is_active=1")->fetchColumn(),
+    'weapons' => $pdo->query("SELECT COUNT(*) FROM items i JOIN weapon_attributes wa ON i.id = wa.item_id WHERE i.item_type_id = 1 AND i.is_active=1")->fetchColumn(),
+    'armors' => $pdo->query("SELECT COUNT(*) FROM items i JOIN armor_attributes aa ON i.id = aa.item_id WHERE i.item_type_id = 2 AND i.is_active=1")->fetchColumn(),
+    'consumables' => $pdo->query("SELECT COUNT(*) FROM items i JOIN consumable_attributes ca ON i.id = ca.item_id WHERE i.item_type_id = 3 AND i.is_active=1")->fetchColumn(),
     'locations' => $pdo->query("SELECT COUNT(*) FROM locations")->fetchColumn(),
     'map_nodes' => $pdo->query("SELECT COUNT(*) FROM map_nodes")->fetchColumn(),
     'logs' => $pdo->query("SELECT COUNT(*) FROM admin_logs")->fetchColumn(),
@@ -143,15 +143,43 @@ switch ($action) {
         break;
         
     case 'weapons':
-        $items = $pdo->query("SELECT * FROM weapons ORDER BY id DESC LIMIT 50")->fetchAll();
+        $items = $pdo->query("
+            SELECT i.*, wa.* 
+            FROM items i
+            JOIN weapon_attributes wa ON i.id = wa.item_id
+            WHERE i.item_type_id = 1
+            ORDER BY i.id DESC LIMIT 50
+        ")->fetchAll();
         break;
         
     case 'armors':
-        $items = $pdo->query("SELECT * FROM armors ORDER BY id DESC LIMIT 50")->fetchAll();
+        $items = $pdo->query("
+            SELECT i.*, aa.* 
+            FROM items i
+            JOIN armor_attributes aa ON i.id = aa.item_id
+            WHERE i.item_type_id = 2
+            ORDER BY i.id DESC LIMIT 50
+        ")->fetchAll();
         break;
         
     case 'consumables':
-        $items = $pdo->query("SELECT * FROM consumables ORDER BY id DESC LIMIT 50")->fetchAll();
+        $items = $pdo->query("
+            SELECT i.*, ca.* 
+            FROM items i
+            JOIN consumable_attributes ca ON i.id = ca.item_id
+            WHERE i.item_type_id = 3
+            ORDER BY i.id DESC LIMIT 50
+        ")->fetchAll();
+        break;
+        
+    case 'loot':
+        $items = $pdo->query("
+            SELECT i.*, la.* 
+            FROM items i
+            JOIN loot_attributes la ON i.id = la.item_id
+            WHERE i.item_type_id = 4
+            ORDER BY i.id DESC LIMIT 50
+        ")->fetchAll();
         break;
         
         case 'dungeons':
@@ -779,7 +807,7 @@ switch ($action) {
             <div class="page-header"><h1>🔫 Оружие</h1></div>
             <div class="card">
                 <table>
-                    <thead><tr><th>ID</th><th>Ключ</th><th>Имя</th><th>Урон</th><th>Вес</th><th>Цена</th></tr></thead>
+                    <thead><tr><th>ID</th><th>Ключ</th><th>Имя</th><th>Урон</th><th>Вес</th><th>Цена</th><th>Тип</th></tr></thead>
                     <tbody>
                         <?php foreach ($items as $w): ?>
                             <tr>
@@ -789,6 +817,7 @@ switch ($action) {
                                 <td><?= $w['dmg_dice'] ?>d + <?= $w['dmg_mod'] ?></td>
                                 <td><?= $w['weight'] ?></td>
                                 <td><?= $w['value'] ?> 💰</td>
+                                <td><?= htmlspecialchars($w['range_type']) ?></td>
                             </tr>
                         <?php endforeach; ?>
                     </tbody>
@@ -800,7 +829,7 @@ switch ($action) {
             <div class="page-header"><h1>🛡️ Броня</h1></div>
             <div class="card">
                 <table>
-                    <thead><tr><th>ID</th><th>Ключ</th><th>Имя</th><th>Защита</th><th>Вес</th><th>Цена</th></tr></thead>
+                    <thead><tr><th>ID</th><th>Ключ</th><th>Имя</th><th>Защита</th><th>Слот</th><th>Вес</th><th>Цена</th></tr></thead>
                     <tbody>
                         <?php foreach ($items as $a): ?>
                             <tr>
@@ -808,6 +837,7 @@ switch ($action) {
                                 <td><code><?= htmlspecialchars($a['item_key']) ?></code></td>
                                 <td><?= htmlspecialchars($a['name']) ?></td>
                                 <td><?= $a['defense'] ?></td>
+                                <td><?= htmlspecialchars($a['slot_type']) ?></td>
                                 <td><?= $a['weight'] ?></td>
                                 <td><?= $a['value'] ?> 💰</td>
                             </tr>
@@ -821,7 +851,7 @@ switch ($action) {
             <div class="page-header"><h1>💊 Расходники</h1></div>
             <div class="card">
                 <table>
-                    <thead><tr><th>ID</th><th>Ключ</th><th>Имя</th><th>HP</th><th>Рад</th><th>Зависимость</th></tr></thead>
+                    <thead><tr><th>ID</th><th>Ключ</th><th>Имя</th><th>HP</th><th>Рад</th><th>Буст</th><th>Длит.</th></tr></thead>
                     <tbody>
                         <?php foreach ($items as $c): ?>
                             <tr>
@@ -829,8 +859,31 @@ switch ($action) {
                                 <td><code><?= htmlspecialchars($c['item_key']) ?></code></td>
                                 <td><?= htmlspecialchars($c['name']) ?></td>
                                 <td><?= $c['heal_amount'] > 0 ? '+' . $c['heal_amount'] : '—' ?></td>
-                                <td><?= $c['rad_heal'] > 0 ? '-' . $c['rad_heal'] : '—' ?></td>
-                                <td><?= $c['addiction_chance'] ?>%</td>
+                                <td><?= $c['rad_heal'] != 0 ? ($c['rad_heal'] > 0 ? '-' . $c['rad_heal'] : $c['rad_heal']) : '—' ?></td>
+                                <td><?= $c['boost_type'] ? htmlspecialchars($c['boost_type']) . ' ' . ($c['boost_value'] > 0 ? '+' : '') . $c['boost_value'] : '—' ?></td>
+                                <td><?= $c['effect_duration'] ?>с</td>
+                            </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+        <?php break; ?>
+        
+        <?php case 'loot': ?>
+            <div class="page-header"><h1>📦 Лут</h1></div>
+            <div class="card">
+                <table>
+                    <thead><tr><th>ID</th><th>Ключ</th><th>Имя</th><th>Категория</th><th>Стек</th><th>Вес</th><th>Цена</th></tr></thead>
+                    <tbody>
+                        <?php foreach ($items as $l): ?>
+                            <tr>
+                                <td><?= $l['id'] ?></td>
+                                <td><code><?= htmlspecialchars($l['item_key']) ?></code></td>
+                                <td><?= htmlspecialchars($l['name']) ?></td>
+                                <td><span class="badge"><?= htmlspecialchars($l['category']) ?></span></td>
+                                <td><?= $l['stackable'] ? 'Да (max ' . $l['max_stack'] . ')' : 'Нет' ?></td>
+                                <td><?= $l['weight'] ?></td>
+                                <td><?= $l['value'] ?> 💰</td>
                             </tr>
                         <?php endforeach; ?>
                     </tbody>

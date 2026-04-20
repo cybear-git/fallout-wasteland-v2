@@ -13,7 +13,8 @@ try {
     
     $tables = [
         'map_adjacency', 'map_nodes', 'locations', 'players', 'characters',
-        'inventory', 'weapons', 'armors', 'consumables', 'loot', 'monsters',
+        'inventory', 'items', 'weapon_attributes', 'armor_attributes', 
+        'consumable_attributes', 'loot_attributes', 'item_types', 'monsters',
         'dungeons', 'dungeon_nodes', 'game_settings', 'admin_logs',
         'location_quotes', 'combat_logs', 'combats', 'loot_tables',
         'loot_table_items', 'player_effects', 'search_logs', 'player_ammo',
