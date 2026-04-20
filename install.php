@@ -2,6 +2,15 @@
 /**
  * 🌍 Fallout Wasteland V2 - Installer & World Generator
  * ⚠️ WARNING: This script will DROP and RECREATE the database. All data will be lost.
+ * 
+ * НОРМАЛИЗОВАННАЯ СТРУКТУРА БД:
+ * - item_types: типы предметов
+ * - items: общая таблица предметов
+ * - weapon_attributes: атрибуты оружия
+ * - armor_attributes: атрибуты брони
+ * - consumable_attributes: атрибуты расходников
+ * - loot_attributes: атрибуты лута
+ * - inventory: инвентарь с item_id
  */
 
 declare(strict_types=1);
