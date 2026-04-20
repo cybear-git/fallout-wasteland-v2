@@ -73,13 +73,8 @@ try {
     $pdo = new PDO($dsnDb, $dbUser, $dbPass, $options);
     $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
     
-    // 2. Start Transaction (after reconnecting to new database)
-    echo "💾 Starting transaction... ";
-    $pdo->beginTransaction();
-    $transactionStarted = true;
-    echo "\033[32mOK\033[0m\n";
 
-    // 3. Create Tables
+    // 2. Create Tables (DDL operations auto-commit)
     echo "🏗️  Creating tables...\n";
     
     $tables = [
@@ -251,6 +246,13 @@ try {
         $pdo->exec($sql);
         echo "\033[32mOK\033[0m\n";
     }
+
+    
+    // 3. Start Transaction (after creating tables, before data insertion)
+    echo "💾 Starting transaction... ";
+    $pdo->beginTransaction();
+    $transactionStarted = true;
+    echo "\033[32mOK\033[0m\n";
 
     // 4. Populate Data
     echo "📦 Populating data...\n";
