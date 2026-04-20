@@ -47,9 +47,10 @@ function getEquippedAmmoType(int $characterId): string {
     $stmt = $pdo->prepare("
         SELECT at.type_name 
         FROM inventory i 
-        JOIN weapons w ON i.item_key = w.item_key
-        JOIN ammo_types at ON at.id = w.ammo_type_id
-        WHERE i.character_id = ? AND i.equipped = 1 AND i.item_type = 'weapon'
+        JOIN items it ON i.item_id = it.id
+        JOIN weapon_attributes wa ON it.id = wa.item_id
+        LEFT JOIN ammo_types at ON at.id = wa.ammo_type_id
+        WHERE i.character_id = ? AND i.equipped = 1 AND it.item_type_id = 1
         LIMIT 1
     ");
     $stmt->execute([$characterId]);
@@ -348,10 +349,11 @@ function getEquippedWeaponDamage(int $characterId): int {
     global $pdo;
     
     $stmt = $pdo->prepare("
-        SELECT COALESCE(w.dmg_mod, 0) as damage
+        SELECT COALESCE(wa.dmg_mod, 0) as damage
         FROM inventory i
-        JOIN weapons w ON i.item_key = w.item_key
-        WHERE i.character_id = ? AND i.equipped = 1 AND i.item_type = 'weapon'
+        JOIN items it ON i.item_id = it.id
+        JOIN weapon_attributes wa ON it.id = wa.item_id
+        WHERE i.character_id = ? AND i.equipped = 1 AND it.item_type_id = 1
         LIMIT 1
     ");
     
@@ -413,10 +415,11 @@ function getPlayerArmor(int $characterId): int {
     global $pdo;
     
     $stmt = $pdo->prepare("
-        SELECT COALESCE(SUM(a.defense), 0) as total_armor
+        SELECT COALESCE(SUM(aa.defense), 0) as total_armor
         FROM inventory i
-        JOIN armors a ON i.item_key = a.item_key
-        WHERE i.character_id = ? AND i.equipped = 1 AND i.item_type = 'armor'
+        JOIN items it ON i.item_id = it.id
+        JOIN armor_attributes aa ON it.id = aa.item_id
+        WHERE i.character_id = ? AND i.equipped = 1 AND it.item_type_id = 2
     ");
     
     $stmt->execute([$characterId]);
@@ -668,16 +671,17 @@ function useItemInCombat(int $combatId, int $characterId, int $inventoryItemId):
     global $pdo;
     
     $stmt = $pdo->prepare("
-        SELECT i.*, c.heal_amount, c.rad_heal, c.boost_type, c.boost_value, c.name as item_name
+        SELECT i.*, ca.heal_amount, ca.rad_heal, ca.boost_type, ca.boost_value, it.name as item_name
         FROM inventory i
-        LEFT JOIN consumables c ON i.item_key = c.item_key
+        JOIN items it ON i.item_id = it.id
+        LEFT JOIN consumable_attributes ca ON it.id = ca.item_id
         WHERE i.id = ? AND i.character_id = ?
     ");
     
     $stmt->execute([$inventoryItemId, $characterId]);
     $item = $stmt->fetch(PDO::FETCH_ASSOC);
     
-    if (!$item || $item['item_type'] !== 'consumable') {
+    if (!$item || $item['item_type_id'] != 3) {
         return ['success' => false, 'error' => 'Нельзя использовать этот предмет'];
     }
     

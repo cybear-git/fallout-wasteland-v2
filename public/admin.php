@@ -106,9 +106,9 @@ $stats = [
     'players' => $pdo->query("SELECT COUNT(*) FROM players")->fetchColumn(),
     'characters' => $pdo->query("SELECT COUNT(*) FROM characters")->fetchColumn(),
     'monsters' => $pdo->query("SELECT COUNT(*) FROM monsters WHERE is_active=1")->fetchColumn(),
-    'weapons' => $pdo->query("SELECT COUNT(*) FROM weapons WHERE is_active=1")->fetchColumn(),
-    'armors' => $pdo->query("SELECT COUNT(*) FROM armors WHERE is_active=1")->fetchColumn(),
-    'consumables' => $pdo->query("SELECT COUNT(*) FROM consumables WHERE is_active=1")->fetchColumn(),
+    'weapons' => $pdo->query("SELECT COUNT(*) FROM items i JOIN weapon_attributes wa ON i.id = wa.item_id WHERE i.item_type_id = 1 AND i.is_active=1")->fetchColumn(),
+    'armors' => $pdo->query("SELECT COUNT(*) FROM items i JOIN armor_attributes aa ON i.id = aa.item_id WHERE i.item_type_id = 2 AND i.is_active=1")->fetchColumn(),
+    'consumables' => $pdo->query("SELECT COUNT(*) FROM items i JOIN consumable_attributes ca ON i.id = ca.item_id WHERE i.item_type_id = 3 AND i.is_active=1")->fetchColumn(),
     'locations' => $pdo->query("SELECT COUNT(*) FROM locations")->fetchColumn(),
     'map_nodes' => $pdo->query("SELECT COUNT(*) FROM map_nodes")->fetchColumn(),
     'logs' => $pdo->query("SELECT COUNT(*) FROM admin_logs")->fetchColumn(),
@@ -143,15 +143,43 @@ switch ($action) {
         break;
         
     case 'weapons':
-        $items = $pdo->query("SELECT * FROM weapons ORDER BY id DESC LIMIT 50")->fetchAll();
+        $items = $pdo->query("
+            SELECT i.*, wa.* 
+            FROM items i
+            JOIN weapon_attributes wa ON i.id = wa.item_id
+            WHERE i.item_type_id = 1
+            ORDER BY i.id DESC LIMIT 50
+        ")->fetchAll();
         break;
         
     case 'armors':
-        $items = $pdo->query("SELECT * FROM armors ORDER BY id DESC LIMIT 50")->fetchAll();
+        $items = $pdo->query("
+            SELECT i.*, aa.* 
+            FROM items i
+            JOIN armor_attributes aa ON i.id = aa.item_id
+            WHERE i.item_type_id = 2
+            ORDER BY i.id DESC LIMIT 50
+        ")->fetchAll();
         break;
         
     case 'consumables':
-        $items = $pdo->query("SELECT * FROM consumables ORDER BY id DESC LIMIT 50")->fetchAll();
+        $items = $pdo->query("
+            SELECT i.*, ca.* 
+            FROM items i
+            JOIN consumable_attributes ca ON i.id = ca.item_id
+            WHERE i.item_type_id = 3
+            ORDER BY i.id DESC LIMIT 50
+        ")->fetchAll();
+        break;
+        
+    case 'loot':
+        $items = $pdo->query("
+            SELECT i.*, la.* 
+            FROM items i
+            JOIN loot_attributes la ON i.id = la.item_id
+            WHERE i.item_type_id = 4
+            ORDER BY i.id DESC LIMIT 50
+        ")->fetchAll();
         break;
         
         case 'dungeons':
@@ -274,76 +302,8 @@ switch ($action) {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Админ-панель | Fallout RPG</title>
-    <style>
-        :root { --bg: #1a1a2e; --card: #16213e; --blue: #0f3460; --accent: #e94560; --green: #00d9ff; --text: #eee; --gray: #888; --border: #333; }
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { font-family: 'Segoe UI', sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; display: flex; }
-        
-        .sidebar { width: 260px; background: var(--card); border-right: 1px solid var(--border); min-height: 100vh; position: fixed; }
-        .sidebar-header { padding: 20px; border-bottom: 1px solid var(--border); }
-        .sidebar-header h2 { font-size: 18px; color: var(--accent); }
-        .nav-section { padding: 15px 0; }
-        .nav-label { padding: 5px 20px; font-size: 11px; color: var(--gray); text-transform: uppercase; }
-        .nav-item { display: flex; align-items: center; padding: 12px 20px; color: var(--text); text-decoration: none; font-size: 14px; transition: 0.2s; }
-        .nav-item:hover { background: var(--blue); }
-        .nav-item.active { background: var(--accent); color: #fff; }
-        .nav-item.danger { color: var(--accent); }
-        .nav-item .icon { width: 24px; margin-right: 10px; }
-        
-        .main { flex: 1; margin-left: 260px; padding: 30px; }
-        .page-header { margin-bottom: 25px; }
-        .page-header h1 { font-size: 28px; margin-bottom: 5px; }
-        .page-header .subtitle { color: var(--gray); }
-        
-        .card { background: var(--card); border-radius: 12px; padding: 20px; margin-bottom: 20px; border: 1px solid var(--border); }
-        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 15px; margin-bottom: 20px; }
-        .stat-card { background: var(--card); border-radius: 10px; padding: 15px; text-align: center; border: 1px solid var(--border); }
-        .stat-card .label { font-size: 12px; color: var(--gray); margin-bottom: 5px; }
-        .stat-card .value { font-size: 24px; font-weight: bold; color: var(--green); }
-        
-        table { width: 100%; border-collapse: collapse; }
-        th { text-align: left; padding: 12px; font-size: 11px; color: var(--gray); text-transform: uppercase; border-bottom: 1px solid var(--border); }
-        td { padding: 12px; border-bottom: 1px solid var(--border); font-size: 13px; }
-        tr:hover td { background: var(--blue); }
-        
-        .btn { padding: 8px 14px; font-size: 12px; border: none; border-radius: 6px; cursor: pointer; text-decoration: none; display: inline-block; }
-        .btn-blue { background: var(--blue); color: var(--green); }
-        .btn-red { background: var(--accent); color: #fff; }
-        .btn-ghost { background: transparent; border: 1px solid var(--border); color: var(--text); }
-        
-        .form-group { margin-bottom: 15px; }
-        label { display: block; font-size: 12px; color: var(--gray); margin-bottom: 5px; }
-        input, select, textarea { width: 100%; padding: 10px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-size: 14px; }
-        input:focus, select:focus { outline: none; border-color: var(--green); }
-        
-        .alert { padding: 12px 16px; border-radius: 8px; margin-bottom: 20px; font-size: 14px; }
-        .alert-success { background: rgba(0,217,255,0.1); border: 1px solid var(--green); color: var(--green); }
-        .alert-error { background: rgba(233,69,96,0.1); border: 1px solid var(--accent); color: var(--accent); }
-        
-        .badge { padding: 3px 8px; border-radius: 4px; font-size: 11px; }
-        .badge-active { background: rgba(0,217,255,0.2); color: var(--green); }
-        .badge-inactive { background: rgba(233,69,96,0.2); color: var(--accent); }
-        
-        .map-container { background: var(--bg); border-radius: 8px; padding: 15px; overflow-x: auto; }
-        .map-grid { display: grid; gap: 2px; width: fit-content; }
-        .map-cell { width: 24px; height: 24px; border: 1px solid var(--border); border-radius: 2px; cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 10px; transition: 0.1s; }
-        .map-cell:hover { transform: scale(1.2); z-index: 10; border-color: var(--green); }
-        .cell-wasteland { background: #4a4a3a; }
-        .cell-city { background: #5a5a5a; }
-        .cell-dungeon { background: #3a3a5a; }
-        .cell-vault { background: #4a3a3a; }
-        .cell-vault_ext { background: #5a4a4a; }
-        .cell-military { background: #3a4a3a; }
-        .cell-military_base { background: #2a3a2a; }
-        .cell-ruins { background: #5a4a3a; }
-        .cell-radzone { background: #4a6a4a; }
-        .cell-forest { background: #3a5a3a; }
-        .cell-mountain { background: #6a6a7a; }
-        .cell-desert { background: #7a6a4a; }
-        .cell-camp { background: #5a5a3a; }
-        .cell-empty { background: #2a2a3a; }
-        .cell-border { background: var(--accent); }
-    </style>
+    <link rel="stylesheet" href="/assets/css/admin.css">
+    <link rel="stylesheet" href="/assets/css/game.css">
 </head>
 <body>
     <nav class="sidebar">
@@ -847,7 +807,7 @@ switch ($action) {
             <div class="page-header"><h1>🔫 Оружие</h1></div>
             <div class="card">
                 <table>
-                    <thead><tr><th>ID</th><th>Ключ</th><th>Имя</th><th>Урон</th><th>Вес</th><th>Цена</th></tr></thead>
+                    <thead><tr><th>ID</th><th>Ключ</th><th>Имя</th><th>Урон</th><th>Вес</th><th>Цена</th><th>Тип</th></tr></thead>
                     <tbody>
                         <?php foreach ($items as $w): ?>
                             <tr>
@@ -857,6 +817,7 @@ switch ($action) {
                                 <td><?= $w['dmg_dice'] ?>d + <?= $w['dmg_mod'] ?></td>
                                 <td><?= $w['weight'] ?></td>
                                 <td><?= $w['value'] ?> 💰</td>
+                                <td><?= htmlspecialchars($w['range_type']) ?></td>
                             </tr>
                         <?php endforeach; ?>
                     </tbody>
@@ -868,7 +829,7 @@ switch ($action) {
             <div class="page-header"><h1>🛡️ Броня</h1></div>
             <div class="card">
                 <table>
-                    <thead><tr><th>ID</th><th>Ключ</th><th>Имя</th><th>Защита</th><th>Вес</th><th>Цена</th></tr></thead>
+                    <thead><tr><th>ID</th><th>Ключ</th><th>Имя</th><th>Защита</th><th>Слот</th><th>Вес</th><th>Цена</th></tr></thead>
                     <tbody>
                         <?php foreach ($items as $a): ?>
                             <tr>
@@ -876,6 +837,7 @@ switch ($action) {
                                 <td><code><?= htmlspecialchars($a['item_key']) ?></code></td>
                                 <td><?= htmlspecialchars($a['name']) ?></td>
                                 <td><?= $a['defense'] ?></td>
+                                <td><?= htmlspecialchars($a['slot_type']) ?></td>
                                 <td><?= $a['weight'] ?></td>
                                 <td><?= $a['value'] ?> 💰</td>
                             </tr>
@@ -889,7 +851,7 @@ switch ($action) {
             <div class="page-header"><h1>💊 Расходники</h1></div>
             <div class="card">
                 <table>
-                    <thead><tr><th>ID</th><th>Ключ</th><th>Имя</th><th>HP</th><th>Рад</th><th>Зависимость</th></tr></thead>
+                    <thead><tr><th>ID</th><th>Ключ</th><th>Имя</th><th>HP</th><th>Рад</th><th>Буст</th><th>Длит.</th></tr></thead>
                     <tbody>
                         <?php foreach ($items as $c): ?>
                             <tr>
@@ -897,8 +859,31 @@ switch ($action) {
                                 <td><code><?= htmlspecialchars($c['item_key']) ?></code></td>
                                 <td><?= htmlspecialchars($c['name']) ?></td>
                                 <td><?= $c['heal_amount'] > 0 ? '+' . $c['heal_amount'] : '—' ?></td>
-                                <td><?= $c['rad_heal'] > 0 ? '-' . $c['rad_heal'] : '—' ?></td>
-                                <td><?= $c['addiction_chance'] ?>%</td>
+                                <td><?= $c['rad_heal'] != 0 ? ($c['rad_heal'] > 0 ? '-' . $c['rad_heal'] : $c['rad_heal']) : '—' ?></td>
+                                <td><?= $c['boost_type'] ? htmlspecialchars($c['boost_type']) . ' ' . ($c['boost_value'] > 0 ? '+' : '') . $c['boost_value'] : '—' ?></td>
+                                <td><?= $c['effect_duration'] ?>с</td>
+                            </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+        <?php break; ?>
+        
+        <?php case 'loot': ?>
+            <div class="page-header"><h1>📦 Лут</h1></div>
+            <div class="card">
+                <table>
+                    <thead><tr><th>ID</th><th>Ключ</th><th>Имя</th><th>Категория</th><th>Стек</th><th>Вес</th><th>Цена</th></tr></thead>
+                    <tbody>
+                        <?php foreach ($items as $l): ?>
+                            <tr>
+                                <td><?= $l['id'] ?></td>
+                                <td><code><?= htmlspecialchars($l['item_key']) ?></code></td>
+                                <td><?= htmlspecialchars($l['name']) ?></td>
+                                <td><span class="badge"><?= htmlspecialchars($l['category']) ?></span></td>
+                                <td><?= $l['stackable'] ? 'Да (max ' . $l['max_stack'] . ')' : 'Нет' ?></td>
+                                <td><?= $l['weight'] ?></td>
+                                <td><?= $l['value'] ?> 💰</td>
                             </tr>
                         <?php endforeach; ?>
                     </tbody>
@@ -1013,5 +998,8 @@ switch ($action) {
             <div class="page-header"><h1>404</h1><p>Страница не найдена</p></div>
         <?php endswitch; ?>
     </main>
+    
+    <!-- Подключаем внешний JS файл для админки -->
+    <script src="/assets/js/admin.js"></script>
 </body>
 </html>
