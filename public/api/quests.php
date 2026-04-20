@@ -1,5 +1,5 @@
 <?php
-require_once __DIR__ . '/../../includes/db.php';
+require_once __DIR__ . '/../../config/database.php';
 require_once __DIR__ . '/../../includes/auth.php';
 
 header('Content-Type: application/json');
@@ -10,7 +10,9 @@ if (!isLoggedIn()) {
     exit;
 }
 
-$userId = getCurrentUserId();
+$player = getCurrentPlayer();
+$characterId = $player['character_id'];
+$pdo = getDbConnection();
 $action = $_POST['action'] ?? $_GET['action'] ?? '';
 
 try {
@@ -19,14 +21,14 @@ try {
             // Получить доступные и активные квесты игрока
             $sql = "SELECT q.*, pq.status, pq.progress, pq.started_at, pq.completed_at
                     FROM quests q
-                    LEFT JOIN player_quests pq ON q.id = pq.quest_id AND pq.user_id = ?
+                    LEFT JOIN player_quests pq ON q.id = pq.quest_id AND pq.character_id = ?
                     WHERE q.active = TRUE
                     ORDER BY 
                         CASE WHEN pq.status = 'active' THEN 0 ELSE 1 END,
                         q.id";
             
             $stmt = $pdo->prepare($sql);
-            $stmt->execute([$userId]);
+            $stmt->execute([$characterId]);
             $quests = $stmt->fetchAll(PDO::FETCH_ASSOC);
             
             echo json_encode(['success' => true, 'quests' => $quests]);
@@ -51,18 +53,18 @@ try {
             
             // Проверка, не выполняет ли игрок уже этот квест (если он не повторяемый)
             if (!$quest['is_repeatable']) {
-                $existingSql = "SELECT id FROM player_quests WHERE user_id = ? AND quest_id = ? AND status != 'failed'";
+                $existingSql = "SELECT id FROM player_quests WHERE character_id = ? AND quest_id = ? AND status != 'failed'";
                 $existingStmt = $pdo->prepare($existingSql);
-                $existingStmt->execute([$userId, $questId]);
+                $existingStmt->execute([$characterId, $questId]);
                 if ($existingStmt->fetch()) {
                     throw new Exception('You already have this quest');
                 }
             }
             
             // Начало квеста
-            $insertSql = "INSERT INTO player_quests (user_id, quest_id, status, progress) VALUES (?, ?, 'active', 0)";
+            $insertSql = "INSERT INTO player_quests (character_id, quest_id, status, progress) VALUES (?, ?, 'active', 0)";
             $insertStmt = $pdo->prepare($insertSql);
-            $insertStmt->execute([$userId, $questId]);
+            $insertStmt->execute([$characterId, $questId]);
             
             echo json_encode([
                 'success' => true,
@@ -83,10 +85,10 @@ try {
             $sql = "SELECT pq.*, q.target_count 
                     FROM player_quests pq
                     JOIN quests q ON pq.quest_id = q.id
-                    WHERE pq.user_id = ? AND pq.quest_id = ? AND pq.status = 'active'";
+                    WHERE pq.character_id = ? AND pq.quest_id = ? AND pq.status = 'active'";
             
             $stmt = $pdo->prepare($sql);
-            $stmt->execute([$userId, $questId]);
+            $stmt->execute([$characterId, $questId]);
             $playerQuest = $stmt->fetch(PDO::FETCH_ASSOC);
             
             if (!$playerQuest) {
@@ -121,11 +123,11 @@ try {
             $sql = "SELECT pq.*, q.reward_caps, q.reward_xp, q.reward_item_id, q.reward_item_count, q.title
                     FROM player_quests pq
                     JOIN quests q ON pq.quest_id = q.id
-                    WHERE pq.user_id = ? AND pq.quest_id = ? AND pq.status = 'active'
+                    WHERE pq.character_id = ? AND pq.quest_id = ? AND pq.status = 'active'
                     AND pq.progress >= q.target_count";
             
             $stmt = $pdo->prepare($sql);
-            $stmt->execute([$userId, $questId]);
+            $stmt->execute([$characterId, $questId]);
             $playerQuest = $stmt->fetch(PDO::FETCH_ASSOC);
             
             if (!$playerQuest) {
@@ -137,27 +139,27 @@ try {
             
             // Выдача награды: крышки
             if ($playerQuest['reward_caps'] > 0) {
-                $capsSql = "UPDATE users SET caps = caps + ? WHERE id = ?";
+                $capsSql = "UPDATE characters SET caps = caps + ? WHERE id = ?";
                 $capsStmt = $pdo->prepare($capsSql);
-                $capsStmt->execute([$playerQuest['reward_caps'], $userId]);
+                $capsStmt->execute([$playerQuest['reward_caps'], $characterId]);
             }
             
             // Выдача награды: опыт
             if ($playerQuest['reward_xp'] > 0) {
-                $xpSql = "UPDATE users SET xp = xp + ? WHERE id = ?";
+                $xpSql = "UPDATE characters SET xp = xp + ? WHERE id = ?";
                 $xpStmt = $pdo->prepare($xpSql);
-                $xpStmt->execute([$playerQuest['reward_xp'], $userId]);
+                $xpStmt->execute([$playerQuest['reward_xp'], $characterId]);
                 
                 // Здесь можно добавить логику повышения уровня
             }
             
             // Выдача награды: предмет
             if ($playerQuest['reward_item_id'] && $playerQuest['reward_item_count'] > 0) {
-                $itemSql = "INSERT INTO user_items (user_id, item_id, quantity) VALUES (?, ?, ?)
+                $itemSql = "INSERT INTO user_items (character_id, item_id, quantity) VALUES (?, ?, ?)
                            ON DUPLICATE KEY UPDATE quantity = quantity + ?";
                 $itemStmt = $pdo->prepare($itemSql);
                 $itemStmt->execute([
-                    $userId, 
+                    $characterId, 
                     $playerQuest['reward_item_id'], 
                     $playerQuest['reward_item_count'],
                     $playerQuest['reward_item_count']
