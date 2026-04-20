@@ -114,29 +114,113 @@ try {
             FOREIGN KEY (player_id) REFERENCES players(id) ON DELETE CASCADE
         ) ENGINE=InnoDB",
 
+        "item_types" => "CREATE TABLE item_types (
+            id TINYINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            type_key VARCHAR(50) UNIQUE NOT NULL,
+            name VARCHAR(100) NOT NULL,
+            description TEXT,
+            is_active TINYINT(1) DEFAULT 1,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
+
         "items" => "CREATE TABLE items (
             id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-            `name` VARCHAR(100) NOT NULL,
-            `description` TEXT,
-            `type` ENUM('weapon', 'armor', 'consumable', 'junk', 'ammo', 'misc') NOT NULL,
-            `value` INT UNSIGNED DEFAULT 1,
-            `weight` DECIMAL(5,2) DEFAULT 1.00,
-            damage_min INT UNSIGNED DEFAULT 0,
-            damage_max INT UNSIGNED DEFAULT 0,
-            armor_class INT UNSIGNED DEFAULT 0,
-            ammo_type VARCHAR(50) NULL,
-            image_url VARCHAR(255) DEFAULT 'assets/img/items/unknown.png'
-        ) ENGINE=InnoDB",
+            item_key VARCHAR(50) UNIQUE NOT NULL,
+            item_type_id TINYINT UNSIGNED NOT NULL,
+            name VARCHAR(100) NOT NULL,
+            description TEXT,
+            weight DECIMAL(5,2) DEFAULT 0.00,
+            value INT UNSIGNED DEFAULT 0,
+            is_active TINYINT(1) DEFAULT 1,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            INDEX idx_item_key (item_key),
+            INDEX idx_item_type (item_type_id),
+            INDEX idx_active (is_active),
+            CONSTRAINT fk_items_type FOREIGN KEY (item_type_id) REFERENCES item_types(id) ON DELETE RESTRICT
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
 
-        "character_items" => "CREATE TABLE character_items (
+        "weapon_attributes" => "CREATE TABLE weapon_attributes (
+            id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            item_id INT UNSIGNED NOT NULL UNIQUE,
+            dmg_dice TINYINT UNSIGNED DEFAULT 4,
+            dmg_mod TINYINT SIGNED DEFAULT 0,
+            crit_chance DECIMAL(4,1) DEFAULT 5.0,
+            crit_mult DECIMAL(3,2) DEFAULT 1.5,
+            range_type ENUM('melee', 'short', 'medium', 'long') DEFAULT 'melee',
+            min_range TINYINT UNSIGNED DEFAULT 0,
+            max_range TINYINT UNSIGNED DEFAULT 1,
+            min_str TINYINT UNSIGNED DEFAULT 0,
+            min_per TINYINT UNSIGNED DEFAULT 0,
+            min_end TINYINT UNSIGNED DEFAULT 0,
+            min_cha TINYINT UNSIGNED DEFAULT 0,
+            min_int TINYINT UNSIGNED DEFAULT 0,
+            min_agi TINYINT UNSIGNED DEFAULT 0,
+            min_luk TINYINT UNSIGNED DEFAULT 0,
+            ammo_type_id INT UNSIGNED DEFAULT NULL,
+            CONSTRAINT fk_weapon_item FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE,
+            INDEX idx_range (range_type),
+            INDEX idx_damage (dmg_dice, dmg_mod)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
+
+        "armor_attributes" => "CREATE TABLE armor_attributes (
+            id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            item_id INT UNSIGNED NOT NULL UNIQUE,
+            defense TINYINT UNSIGNED DEFAULT 0,
+            rad_resistance TINYINT UNSIGNED DEFAULT 0,
+            slot_type ENUM('head', 'tors', 'arms', 'legs', 'full_body') DEFAULT 'tors',
+            min_str TINYINT UNSIGNED DEFAULT 0,
+            min_per TINYINT UNSIGNED DEFAULT 0,
+            min_end TINYINT UNSIGNED DEFAULT 0,
+            min_cha TINYINT UNSIGNED DEFAULT 0,
+            min_int TINYINT UNSIGNED DEFAULT 0,
+            min_agi TINYINT UNSIGNED DEFAULT 0,
+            min_luk TINYINT UNSIGNED DEFAULT 0,
+            CONSTRAINT fk_armor_item FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE,
+            INDEX idx_slot (slot_type),
+            INDEX idx_defense (defense, rad_resistance)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
+
+        "consumable_attributes" => "CREATE TABLE consumable_attributes (
+            id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            item_id INT UNSIGNED NOT NULL UNIQUE,
+            heal_amount SMALLINT SIGNED DEFAULT 0,
+            rad_heal SMALLINT SIGNED DEFAULT 0,
+            addiction_chance DECIMAL(4,1) DEFAULT 0.0,
+            boost_type VARCHAR(50) DEFAULT NULL,
+            boost_value TINYINT SIGNED DEFAULT 0,
+            boost_duration TINYINT UNSIGNED DEFAULT 0,
+            effect_duration TINYINT UNSIGNED DEFAULT 0,
+            special_effect VARCHAR(100) DEFAULT NULL,
+            CONSTRAINT fk_consumable_item FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE,
+            INDEX idx_boost (boost_type),
+            INDEX idx_heal (heal_amount, rad_heal)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
+
+        "loot_attributes" => "CREATE TABLE loot_attributes (
+            id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            item_id INT UNSIGNED NOT NULL UNIQUE,
+            category ENUM('junk', 'key_item', 'quest', 'component', 'currency') DEFAULT 'junk',
+            stackable TINYINT(1) DEFAULT 1,
+            max_stack INT UNSIGNED DEFAULT 99,
+            CONSTRAINT fk_loot_item FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE,
+            INDEX idx_category (category),
+            INDEX idx_stackable (stackable)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
+
+        "inventory" => "CREATE TABLE inventory (
             id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
             character_id INT UNSIGNED NOT NULL,
             item_id INT UNSIGNED NOT NULL,
             quantity INT UNSIGNED DEFAULT 1,
-            equipped BOOLEAN DEFAULT FALSE,
+            equipped TINYINT(1) DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE,
-            FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE
-        ) ENGINE=InnoDB",
+            FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE,
+            INDEX idx_character (character_id),
+            INDEX idx_item (item_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
 
         "locations" => "CREATE TABLE locations (
             id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -147,9 +231,9 @@ try {
             y_coord INT UNSIGNED NOT NULL,
             danger_level INT UNSIGNED DEFAULT 1,
             loot_quality INT UNSIGNED DEFAULT 1,
-            is_safe BOOLEAN DEFAULT FALSE,
+            is_safe TINYINT(1) DEFAULT 0,
             UNIQUE KEY unique_coords (x_coord, y_coord)
-        ) ENGINE=InnoDB",
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
 
         "monsters" => "CREATE TABLE monsters (
             id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -163,7 +247,7 @@ try {
             caps_reward_min INT UNSIGNED DEFAULT 5,
             caps_reward_max INT UNSIGNED DEFAULT 15,
             loot_table_id INT UNSIGNED NULL
-        ) ENGINE=InnoDB",
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
 
         "combat_logs" => "CREATE TABLE combat_logs (
             id BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -174,23 +258,23 @@ try {
             caps_gained INT UNSIGNED DEFAULT 0,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE
-        ) ENGINE=InnoDB",
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
 
         "factions" => "CREATE TABLE factions (
             id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
             `name` VARCHAR(100) NOT NULL,
             `description` TEXT,
-            is_hidden BOOLEAN DEFAULT FALSE
-        ) ENGINE=InnoDB",
+            is_hidden TINYINT(1) DEFAULT 0
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
 
         "character_factions" => "CREATE TABLE character_factions (
             character_id INT UNSIGNED NOT NULL,
             faction_id INT UNSIGNED NOT NULL,
-            reputation_rank INT DEFAULT 0, -- Changed from 'rank'
+            reputation_rank INT DEFAULT 0,
             PRIMARY KEY (character_id, faction_id),
             FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE,
             FOREIGN KEY (faction_id) REFERENCES factions(id) ON DELETE CASCADE
-        ) ENGINE=InnoDB",
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
 
         "quests" => "CREATE TABLE quests (
             id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -200,8 +284,9 @@ try {
             xp_reward INT UNSIGNED DEFAULT 100,
             caps_reward INT UNSIGNED DEFAULT 50,
             item_reward_id INT UNSIGNED NULL,
-            is_repeatable BOOLEAN DEFAULT FALSE
-        ) ENGINE=InnoDB",
+            is_repeatable TINYINT(1) DEFAULT 0,
+            FOREIGN KEY (item_reward_id) REFERENCES items(id) ON DELETE SET NULL
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
 
         "character_quests" => "CREATE TABLE character_quests (
             character_id INT UNSIGNED NOT NULL,
@@ -213,7 +298,7 @@ try {
             PRIMARY KEY (character_id, quest_id),
             FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE,
             FOREIGN KEY (quest_id) REFERENCES quests(id) ON DELETE CASCADE
-        ) ENGINE=InnoDB",
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
 
         "recipes" => "CREATE TABLE recipes (
             id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
@@ -222,7 +307,7 @@ try {
             result_quantity INT UNSIGNED DEFAULT 1,
             skill_required INT UNSIGNED DEFAULT 0,
             FOREIGN KEY (result_item_id) REFERENCES items(id) ON DELETE CASCADE
-        ) ENGINE=InnoDB",
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
 
         "recipe_requirements" => "CREATE TABLE recipe_requirements (
             recipe_id INT UNSIGNED NOT NULL,
@@ -231,14 +316,14 @@ try {
             PRIMARY KEY (recipe_id, item_id),
             FOREIGN KEY (recipe_id) REFERENCES recipes(id) ON DELETE CASCADE,
             FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE
-        ) ENGINE=InnoDB",
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci",
 
         "game_settings" => "CREATE TABLE game_settings (
             setting_key VARCHAR(100) PRIMARY KEY,
             setting_value TEXT,
             `description` VARCHAR(255),
             updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-        ) ENGINE=InnoDB"
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci"
     ];
 
     foreach ($tables as $tableName => $sql) {
@@ -257,22 +342,93 @@ try {
     // 4. Populate Data
     echo "📦 Populating data...\n";
 
-    // Items
-    $items = [
-        ['10mm Pistol', 'Standard sidearm.', 'weapon', 50, 2.5, 8, 12, 0, '10mm'],
-        ['Combat Shotgun', 'Heavy hitter.', 'weapon', 200, 8.0, 15, 25, 0, '12ga'],
-        ['Stimpak', 'Heals 50 HP.', 'consumable', 25, 0.5, 0, 0, 0, null],
-        ['Bottle Caps', 'Currency.', 'misc', 1, 0.01, 0, 0, 0, null],
-        ['Scrap Metal', 'Crafting material.', 'junk', 5, 1.0, 0, 0, 0, null],
-        ['Leather Armor', 'Basic protection.', 'armor', 40, 5.0, 0, 0, 5, null],
-        ['10mm Round', 'Ammo for pistol.', 'ammo', 2, 0.05, 0, 0, 0, null],
+    // Item Types
+    echo "   📋 Inserting item types...\n";
+    $pdo->exec("INSERT INTO item_types (type_key, name, description) VALUES
+        ('weapon', 'Оружие', 'Все виды оружия: от ножей до энергетического оружия'),
+        ('armor', 'Броня', 'Защитное снаряжение: одежда, броня, шлемы'),
+        ('consumable', 'Расходники', 'Еда, лекарства, стимуляторы'),
+        ('loot', 'Лут', 'Разные предметы: мусор, компоненты, ключевые предметы')");
+    echo "   ✅ Item types inserted.\n";
+
+    // Items with attributes - using new normalized structure
+    echo "   📦 Inserting items...\n";
+    
+    // Weapons
+    $weapons = [
+        ['switchblade', '1', 'Switchblade', 'Simple knife.', 0.5, 5, 1, 4, 1, 5.0, 1.5, 'melee', 0, 1, 0, 0, 0, 0, 0, 1, 0, null],
+        ['baseball_bat', '1', 'Baseball Bat', 'Wooden bat.', 1.5, 10, 1, 6, 2, 10.0, 1.5, 'melee', 0, 1, 4, 0, 0, 0, 0, 1, 0, null],
+        ['10mm_pistol', '1', '10mm Pistol', 'Standard sidearm.', 2.5, 50, 1, 8, 4, 15.0, 1.5, 'short', 5, 30, 0, 4, 0, 0, 0, 1, 0, null],
+        ['combat_shotgun', '1', 'Combat Shotgun', 'Heavy hitter.', 8.0, 200, 1, 15, 10, 25.0, 1.5, 'short', 3, 15, 5, 0, 0, 0, 0, 1, 0, null],
+        ['assault_rifle', '1', 'Assault Rifle', 'Automatic rifle.', 6.0, 350, 1, 12, 8, 20.0, 1.5, 'medium', 10, 100, 4, 4, 0, 0, 0, 1, 0, null],
     ];
     
-    $stmtItem = $pdo->prepare("INSERT INTO items (name, description, type, value, weight, damage_min, damage_max, armor_class, ammo_type) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
-    foreach ($items as $item) {
-        $stmtItem->execute($item);
+    $stmtWeapon = $pdo->prepare("INSERT INTO items (item_key, item_type_id, name, description, weight, value, is_active) VALUES (?, ?, ?, ?, ?, ?, ?)");
+    $stmtWeaponAttr = $pdo->prepare("INSERT INTO weapon_attributes (item_id, dmg_dice, dmg_mod, crit_chance, crit_mult, range_type, min_range, max_range, min_str, min_per, min_end, min_cha, min_int, min_agi, min_luk, ammo_type_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+    
+    foreach ($weapons as $w) {
+        $stmtWeapon->execute([$w[0], $w[1], $w[2], $w[3], $w[4], $w[5], $w[6]]);
+        $itemId = $pdo->lastInsertId();
+        $stmtWeaponAttr->execute([$itemId, $w[7], $w[8], $w[9], $w[10], $w[11], $w[12], $w[13], $w[14], $w[15], $w[16], $w[17], $w[18], $w[19], $w[20], $w[21]]);
     }
-    echo "   ✅ Items inserted.\n";
+    echo "   ✅ Weapons inserted.\n";
+
+    // Armor
+    $armors = [
+        ['vault_suit', '2', 'Vault Suit', 'Standard jumpsuit.', 2.0, 10, 1, 1, 0, 'full_body', 0, 0, 0, 0, 0, 0, 0, 0],
+        ['leather_armor', '2', 'Leather Armor', 'Basic protection.', 5.0, 40, 1, 3, 0, 'tors', 0, 0, 0, 0, 0, 0, 0],
+        ['metal_armor', '2', 'Metal Armor', 'Heavy metal plating.', 12.0, 150, 1, 6, 5, 'tors', 4, 0, 5, 0, 0, 0, 0],
+        ['combat_armor', '2', 'Combat Armor', 'Military grade.', 8.0, 300, 1, 8, 10, 'tors', 5, 4, 5, 0, 0, 0, 0],
+        ['power_armor', '2', 'Power Armor T-45', 'Advanced power armor.', 25.0, 1000, 1, 15, 20, 'full_body', 8, 0, 10, 0, 0, 0, 0],
+    ];
+    
+    $stmtArmor = $pdo->prepare("INSERT INTO items (item_key, item_type_id, name, description, weight, value, is_active) VALUES (?, ?, ?, ?, ?, ?, ?)");
+    $stmtArmorAttr = $pdo->prepare("INSERT INTO armor_attributes (item_id, defense, rad_resistance, slot_type, min_str, min_per, min_end, min_cha, min_int, min_agi, min_luk) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+    
+    foreach ($armors as $a) {
+        $stmtArmor->execute([$a[0], $a[1], $a[2], $a[3], $a[4], $a[5], $a[6]]);
+        $itemId = $pdo->lastInsertId();
+        $stmtArmorAttr->execute([$itemId, $a[7], $a[8], $a[9], $a[10], $a[11], $a[12], $a[13], $a[14], $a[15], $a[16]]);
+    }
+    echo "   ✅ Armor inserted.\n";
+
+    // Consumables
+    $consumables = [
+        ['stimpak', '3', 'Stimpak', 'Heals 50 HP.', 0.5, 25, 1, 50, 0, 5.0, null, 0, 0, 0, null],
+        ['radaway', '3', 'RadAway', 'Removes radiation.', 0.5, 30, 1, 0, -50, 10.0, null, 0, 0, 0, null],
+        ['food_can', '3', 'Canned Food', 'Restores hunger.', 0.8, 10, 1, 20, 0, 0.0, null, 0, 0, 0, null],
+        ['buffout', '3', 'Buffout', '+2 STR for 10 min.', 0.3, 50, 1, 0, 0, 15.0, 'str', 2, 10, 60, null],
+        ['mentats', '3', 'Mentats', '+2 INT for 10 min.', 0.3, 50, 1, 0, 0, 15.0, 'int', 2, 10, 60, null],
+    ];
+    
+    $stmtConsumable = $pdo->prepare("INSERT INTO items (item_key, item_type_id, name, description, weight, value, is_active) VALUES (?, ?, ?, ?, ?, ?, ?)");
+    $stmtConsumableAttr = $pdo->prepare("INSERT INTO consumable_attributes (item_id, heal_amount, rad_heal, addiction_chance, boost_type, boost_value, boost_duration, effect_duration, special_effect) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
+    
+    foreach ($consumables as $c) {
+        $stmtConsumable->execute([$c[0], $c[1], $c[2], $c[3], $c[4], $c[5], $c[6]]);
+        $itemId = $pdo->lastInsertId();
+        $stmtConsumableAttr->execute([$itemId, $c[7], $c[8], $c[9], $c[10], $c[11], $c[12], $c[13], $c[14]]);
+    }
+    echo "   ✅ Consumables inserted.\n";
+
+    // Loot/Junk
+    $loot = [
+        ['scrap_metal', '4', 'Scrap Metal', 'Crafting material.', 1.0, 5, 1, 'component', 1, 99],
+        ['bottle_caps', '4', 'Bottle Caps', 'Currency.', 0.01, 1, 1, 'currency', 1, 9999],
+        ['prewar_money', '4', 'Pre-War Money', 'Worthless paper.', 0.1, 0, 1, 'junk', 1, 99],
+        ['circuit_board', '4', 'Circuit Board', 'Electronics component.', 0.5, 15, 1, 'component', 1, 50],
+        ['oil_can', '4', 'Oil Can', 'Lubricant.', 0.8, 8, 1, 'component', 1, 20],
+    ];
+    
+    $stmtLoot = $pdo->prepare("INSERT INTO items (item_key, item_type_id, name, description, weight, value, is_active) VALUES (?, ?, ?, ?, ?, ?, ?)");
+    $stmtLootAttr = $pdo->prepare("INSERT INTO loot_attributes (item_id, category, stackable, max_stack) VALUES (?, ?, ?, ?)");
+    
+    foreach ($loot as $l) {
+        $stmtLoot->execute([$l[0], $l[1], $l[2], $l[3], $l[4], $l[5], $l[6]]);
+        $itemId = $pdo->lastInsertId();
+        $stmtLootAttr->execute([$itemId, $l[7], $l[8], $l[9]]);
+    }
+    echo "   ✅ Loot/Junk inserted.\n";
 
     // Monsters
     $monsters = [
@@ -289,22 +445,22 @@ try {
     echo "   ✅ Monsters inserted.\n";
 
     // Factions
-    $factions = [
-        ['Brotherhood of Steel', 'Tech guardians.'],
-        ['Minutemen', 'Commonwealth defenders.'],
-        ['Railroad', 'Synth liberators.'],
-        ['Institute', 'Science elite.'],
-    ];
-    $pdo->exec("INSERT INTO factions (name, description) VALUES ('Brotherhood of Steel', 'Tech guardians'), ('Minutemen', 'Commonwealth defenders'), ('Railroad', 'Synth liberators'), ('Institute', 'Science elite')");
+    $pdo->exec("INSERT INTO factions (name, description) VALUES 
+        ('Brotherhood of Steel', 'Tech guardians.'), 
+        ('Minutemen', 'Commonwealth defenders.'), 
+        ('Railroad', 'Synth liberators.'), 
+        ('Institute', 'Science elite.')");
     echo "   ✅ Factions inserted.\n";
 
     // Settings
     $settings = [
-        ['search_loot_base_chance', '0.4', 'Base chance for weapon drop (%)'],
+        ['search_loot_base_chance', '0.4', 'Base chance for loot drop'],
         ['search_caps_chance_base', '15', 'Base chance to find caps (%)'],
         ['search_caps_min', '1', 'Min caps found'],
         ['search_caps_max', '3', 'Max caps found'],
         ['search_pity_timer_threshold', '50', 'Searches before guaranteed rare'],
+        ['combat_xp_multiplier', '1.0', 'XP multiplier for combat'],
+        ['crafting_enabled', '1', 'Enable crafting system'],
     ];
     $stmtSet = $pdo->prepare("INSERT INTO game_settings (setting_key, setting_value, description) VALUES (?, ?, ?)");
     foreach ($settings as $set) {
