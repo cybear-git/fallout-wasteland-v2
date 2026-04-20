@@ -208,7 +208,7 @@ try {
         character_id INT NOT NULL,
         faction_id INT NOT NULL,
         reputation INT DEFAULT 0,
-        rank VARCHAR(50) DEFAULT 'Neutral',
+        reputation_rank VARCHAR(50) DEFAULT 'Neutral',
         PRIMARY KEY (character_id, faction_id),
         FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE,
         FOREIGN KEY (faction_id) REFERENCES factions(id) ON DELETE CASCADE
