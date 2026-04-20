@@ -1,396 +1,408 @@
 <?php
 /**
- * PIP-BOY WASTELAND: CLEAN INSTALL SCRIPT
+ * FALLOUT WASTELAND V2 - INSTALLER & WORLD GENERATOR
  * 
- * Этот скрипт полностью пересоздает базу данных с нуля.
- * Он заменяет все предыдущие миграции (001-034).
+ * Этот скрипт полностью пересоздает базу данных, генерирует карту 16:9
+ * и наполняет игру контентом. Старые миграции больше не нужны.
  * 
  * ИНСТРУКЦИЯ:
- * 1. Отредактируйте конфигурацию ниже ($dbConfig).
- * 2. Запустите через CLI: php install.php
- * 3. Или через браузер: http://your-site/install.php (только для локальной разработки!)
+ * 1. Отредактируйте настройки подключения ниже.
+ * 2. Запустите: php install.php
+ * 3. Удалите этот файл после успешной установки!
  */
 
-// === КОНФИГУРАЦИЯ ===
-$dbConfig = [
-    'host' => 'localhost',
-    'port' => '3306',
-    'name' => 'pipboy_wasteland',
-    'user' => 'root',      // ИЗМЕНИТЕ НА СВОЕГО
-    'pass' => '',          // ИЗМЕНИТЕ НА СВОЙ ПАРОЛЬ
-    'charset' => 'utf8mb4',
-];
+// ================= НАСТРОЙКИ ПОДКЛЮЧЕНИЯ =================
+$dbHost = 'localhost';
+$dbName = 'fallout_v2';
+$dbUser = 'root';
+$dbPass = ''; // Укажите ваш пароль
 
-$adminConfig = [
-    'username' => 'admin',
-    'password' => 'admin123', // СМЕНите сразу после входа!
-    'email'    => 'admin@wasteland.local',
-];
+// Настройки мира
+$mapWidth = 16;  // Ширина карты (пропорция 16:9 -> 16x9 или масштабированная)
+$mapHeight = 9;  // Высота карты
+$scaleFactor = 1; // Масштаб (1 = 16x9, 2 = 32x18 и т.д.)
 
-// === ПОДКЛЮЧЕНИЕ К MySQL (без выбора БД) ===
+$finalWidth = $mapWidth * $scaleFactor;
+$finalHeight = $mapHeight * $scaleFactor;
+
+echo "🌍 Fallout Wasteland V2 Installer\n";
+echo "================================\n";
+echo "Генерация карты: {$finalWidth}x{$finalHeight} (" . ($finalWidth * $finalHeight) . " локаций)\n\n";
+
 try {
-    $pdo = new PDO(
-        "mysql:host={$dbConfig['host']};port={$dbConfig['port']};charset={$dbConfig['charset']}",
-        $dbConfig['user'],
-        $dbConfig['pass'],
-        [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]
-    );
-    echo "✅ Подключено к MySQL серверу.\n";
-} catch (PDOException $e) {
-    die("❌ Ошибка подключения к MySQL: " . $e->getMessage() . "\n");
-}
+    // 1. Подключение к серверу (без выбора БД, так как будем её создавать/ронять)
+    $pdo = new PDO("mysql:host=$dbHost;charset=utf8mb4", $dbUser, $dbPass);
+    $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+    $pdo->setAttribute(PDO::ATTR_DEFAULT_FETCH_MODE, PDO::FETCH_ASSOC);
 
-// === 1. СОЗДАНИЕ БАЗЫ ДАННЫХ ===
-$dbName = $dbConfig['name'];
-$pdo->exec("DROP DATABASE IF EXISTS `$dbName`");
-$pdo->exec("CREATE DATABASE `$dbName` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
-$pdo->exec("USE `$dbName`");
-echo "✅ База данных `$dbName` пересоздана.\n";
+    echo "✅ Подключение к MySQL успешно.\n";
 
-// === 2. СОЗДАНИЕ ТАБЛИЦ (ОЧИЩЕННАЯ СХЕМА) ===
-$queries = [
-    // --- ЯДРО ---
-    "CREATE TABLE `players` (
-        `id` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-        `username` VARCHAR(50) NOT NULL UNIQUE,
-        `password_hash` VARCHAR(255) NOT NULL,
-        `email` VARCHAR(100) NOT NULL,
-        `role` ENUM('player', 'moderator', 'admin') DEFAULT 'player',
-        `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        `last_login` TIMESTAMP NULL
-    ) ENGINE=InnoDB;",
+    // 2. Удаление старой базы (если есть) и создание новой
+    $pdo->exec("DROP DATABASE IF EXISTS `$dbName`");
+    $pdo->exec("CREATE DATABASE `$dbName` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
+    $pdo->exec("USE `$dbName`");
+    
+    echo "✅ База данных `$dbName` пересоздана.\n";
 
-    "CREATE TABLE `characters` (
-        `id` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-        `player_id` INT UNSIGNED NOT NULL,
-        `name` VARCHAR(50) NOT NULL,
-        `level` INT UNSIGNED DEFAULT 1,
-        `xp` INT UNSIGNED DEFAULT 0,
-        `hp_current` INT UNSIGNED DEFAULT 100,
-        `hp_max` INT UNSIGNED DEFAULT 100,
-        `ap_current` INT UNSIGNED DEFAULT 100,
-        `ap_max` INT UNSIGNED DEFAULT 100,
-        `str` TINYINT UNSIGNED DEFAULT 5,
-        `per` TINYINT UNSIGNED DEFAULT 5,
-        `end` TINYINT UNSIGNED DEFAULT 5,
-        `cha` TINYINT UNSIGNED DEFAULT 5,
-        `int` TINYINT UNSIGNED DEFAULT 5,
-        `agi` TINYINT UNSIGNED DEFAULT 5,
-        `luk` TINYINT UNSIGNED DEFAULT 5,
-        `caps` INT UNSIGNED DEFAULT 50,
-        `location_id` INT UNSIGNED DEFAULT 1,
-        `status` ENUM('alive', 'dead', 'banned') DEFAULT 'alive',
-        `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (`player_id`) REFERENCES `players`(`id`) ON DELETE CASCADE
-    ) ENGINE=InnoDB;",
+    // 3. Начало транзакции (все или ничего)
+    $pdo->beginTransaction();
 
-    // --- ПРЕДМЕТЫ (UNIFIED) ---
-    "CREATE TABLE `items` (
-        `id` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-        `name` VARCHAR(100) NOT NULL,
-        `description` TEXT,
-        `type` ENUM('weapon', 'armor', 'consumable', 'misc', 'junk', 'ammo', 'quest') NOT NULL,
-        `rarity` ENUM('common', 'uncommon', 'rare', 'legendary') DEFAULT 'common',
-        `value` INT UNSIGNED DEFAULT 0,
-        `weight` DECIMAL(5,2) DEFAULT 0.0,
-        `damage_min` INT UNSIGNED DEFAULT 0,
-        `damage_max` INT UNSIGNED DEFAULT 0,
-        `armor_class` INT UNSIGNED DEFAULT 0,
-        `consumable_effect` VARCHAR(100),
-        `consumable_value` INT DEFAULT 0,
-        `icon` VARCHAR(50) DEFAULT 'default.png',
-        `stackable` BOOLEAN DEFAULT TRUE,
-        `max_stack` INT UNSIGNED DEFAULT 999
-    ) ENGINE=InnoDB;",
+    // ================= СОЗДАНИЕ ТАБЛИЦ =================
+    
+    // Пользователи и персонажи
+    $pdo->exec("CREATE TABLE players (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        username VARCHAR(50) UNIQUE NOT NULL,
+        password_hash VARCHAR(255) NOT NULL,
+        email VARCHAR(100),
+        role ENUM('player', 'admin', 'super_admin') DEFAULT 'player',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    ) ENGINE=InnoDB");
 
-    "CREATE TABLE `character_items` (
-        `id` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-        `character_id` INT UNSIGNED NOT NULL,
-        `item_id` INT UNSIGNED NOT NULL,
-        `quantity` INT UNSIGNED DEFAULT 1,
-        `equipped` BOOLEAN DEFAULT FALSE,
-        `slot` ENUM('head', 'body', 'arms', 'legs', 'main_hand', 'off_hand', 'none') DEFAULT 'none',
-        `durability` INT UNSIGNED DEFAULT 100,
-        `obtained_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (`character_id`) REFERENCES `characters`(`id`) ON DELETE CASCADE,
-        FOREIGN KEY (`item_id`) REFERENCES `items`(`id`) ON DELETE CASCADE,
-        UNIQUE KEY `unique_item_slot` (`character_id`, `item_id`, `slot`) -- Упрощено для примера
-    ) ENGINE=InnoDB;",
+    $pdo->exec("CREATE TABLE characters (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        player_id INT NOT NULL,
+        name VARCHAR(50) NOT NULL,
+        level INT DEFAULT 1,
+        experience INT DEFAULT 0,
+        hp INT DEFAULT 100,
+        max_hp INT DEFAULT 100,
+        ap INT DEFAULT 10,
+        max_ap INT DEFAULT 10,
+        strength INT DEFAULT 5,
+        perception INT DEFAULT 5,
+        endurance INT DEFAULT 5,
+        charisma INT DEFAULT 5,
+        intelligence INT DEFAULT 5,
+        agility INT DEFAULT 5,
+        luck INT DEFAULT 5,
+        caps INT DEFAULT 100,
+        x_coord INT DEFAULT 0,
+        y_coord INT DEFAULT 0,
+        location_id INT DEFAULT 1,
+        status ENUM('alive', 'dead', 'banned') DEFAULT 'alive',
+        last_active TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        FOREIGN KEY (player_id) REFERENCES players(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB");
 
-    # --- МИР И ЛОКАЦИИ ---
-    "CREATE TABLE `locations` (
-        `id` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-        `name` VARCHAR(100) NOT NULL,
-        `description` TEXT,
-        `type` ENUM('town', 'dungeon', 'wilderness', 'landmark') DEFAULT 'wilderness',
-        `x` INT NOT NULL DEFAULT 0,
-        `y` INT NOT NULL DEFAULT 0,
-        `z` INT NOT NULL DEFAULT 0,
-        `parent_id` INT UNSIGNED NULL, -- Для подземелий внутри локаций
-        `danger_level` TINYINT UNSIGNED DEFAULT 1,
-        `loot_quality` TINYINT UNSIGNED DEFAULT 1,
-        `music_track` VARCHAR(50),
-        `background_image` VARCHAR(100),
-        FOREIGN KEY (`parent_id`) REFERENCES `locations`(`id`) ON DELETE SET NULL
-    ) ENGINE=InnoDB;",
+    // Предметы
+    $pdo->exec("CREATE TABLE items (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        name VARCHAR(100) NOT NULL,
+        description TEXT,
+        type ENUM('weapon', 'armor', 'consumable', 'junk', 'ammo', 'misc') NOT NULL,
+        rarity ENUM('common', 'uncommon', 'rare', 'legendary') DEFAULT 'common',
+        value INT DEFAULT 1,
+        weight FLOAT DEFAULT 1.0,
+        damage INT DEFAULT 0,
+        defense INT DEFAULT 0,
+        heal_amount INT DEFAULT 0,
+        ammo_type VARCHAR(20),
+        image_url VARCHAR(255) DEFAULT 'assets/img/items/unknown.png'
+    ) ENGINE=InnoDB");
 
-    "CREATE TABLE `map_nodes` (
-        `id` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-        `location_id` INT UNSIGNED NOT NULL,
-        `connections` JSON, -- Массив ID связанных локаций
-        `discovered_by` JSON, -- Массив character_id
-        FOREIGN KEY (`location_id`) REFERENCES `locations`(`id`) ON DELETE CASCADE
-    ) ENGINE=InnoDB;",
+    $pdo->exec("CREATE TABLE character_items (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        character_id INT NOT NULL,
+        item_id INT NOT NULL,
+        quantity INT DEFAULT 1,
+        equipped BOOLEAN DEFAULT FALSE,
+        FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE,
+        FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB");
 
-    # --- БОЙ И СУЩНОСТИ ---
-    "CREATE TABLE `monsters` (
-        `id` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-        `name` VARCHAR(50) NOT NULL,
-        `level` TINYINT UNSIGNED NOT NULL,
-        `hp` INT UNSIGNED NOT NULL,
-        `damage_min` INT UNSIGNED NOT NULL,
-        `damage_max` INT UNSIGNED NOT NULL,
-        `xp_reward` INT UNSIGNED NOT NULL,
-        `caps_reward_min` INT UNSIGNED DEFAULT 0,
-        `caps_reward_max` INT UNSIGNED DEFAULT 0,
-        `loot_table_id` INT UNSIGNED NULL,
-        `image` VARCHAR(100)
-    ) ENGINE=InnoDB;",
+    // Локации и Карта
+    $pdo->exec("CREATE TABLE locations (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        name VARCHAR(100) NOT NULL,
+        description TEXT,
+        type ENUM('city', 'dungeon', 'wilderness', 'landmark', 'shop') NOT NULL,
+        x_coord INT NOT NULL,
+        y_coord INT NOT NULL,
+        difficulty INT DEFAULT 1,
+        loot_quality INT DEFAULT 1,
+        monster_spawn_chance FLOAT DEFAULT 0.3,
+        is_safe_zone BOOLEAN DEFAULT FALSE,
+        music_track VARCHAR(50) DEFAULT 'wasteland_ambience.mp3',
+        UNIQUE KEY unique_coords (x_coord, y_coord)
+    ) ENGINE=InnoDB");
 
-    "CREATE TABLE `combat_logs` (
-        `id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-        `character_id` INT UNSIGNED NOT NULL,
-        `monster_id` INT UNSIGNED NOT NULL,
-        `result` ENUM('win', 'loss', 'flee') NOT NULL,
-        `xp_gained` INT UNSIGNED DEFAULT 0,
-        `caps_gained` INT UNSIGNED DEFAULT 0,
-        `occurred_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (`character_id`) REFERENCES `characters`(`id`) ON DELETE CASCADE
-    ) ENGINE=InnoDB;",
+    $pdo->exec("CREATE TABLE location_connections (
+        location_from INT NOT NULL,
+        location_to INT NOT NULL,
+        distance INT DEFAULT 1,
+        PRIMARY KEY (location_from, location_to),
+        FOREIGN KEY (location_from) REFERENCES locations(id) ON DELETE CASCADE,
+        FOREIGN KEY (location_to) REFERENCES locations(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB");
 
-    # --- КВЕСТЫ И ТОРГОВЛЯ ---
-    "CREATE TABLE `quests` (
-        `id` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-        `title` VARCHAR(100) NOT NULL,
-        `description` TEXT,
-        `objective` TEXT,
-        `reward_xp` INT UNSIGNED DEFAULT 0,
-        `reward_caps` INT UNSIGNED DEFAULT 0,
-        `reward_item_id` INT UNSIGNED NULL,
-        `min_level` TINYINT UNSIGNED DEFAULT 1,
-        `is_repeatable` BOOLEAN DEFAULT FALSE,
-        FOREIGN KEY (`reward_item_id`) REFERENCES `items`(`id`) ON DELETE SET NULL
-    ) ENGINE=InnoDB;",
+    // Монстры
+    $pdo->exec("CREATE TABLE monsters (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        name VARCHAR(50) NOT NULL,
+        description TEXT,
+        level INT DEFAULT 1,
+        hp INT DEFAULT 20,
+        damage_min INT DEFAULT 2,
+        damage_max INT DEFAULT 5,
+        xp_reward INT DEFAULT 10,
+        loot_table_id INT,
+        image_url VARCHAR(255) DEFAULT 'assets/img/monsters/radroach.png'
+    ) ENGINE=InnoDB");
 
-    "CREATE TABLE `character_quests` (
-        `id` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-        `character_id` INT UNSIGNED NOT NULL,
-        `quest_id` INT UNSIGNED NOT NULL,
-        `status` ENUM('available', 'active', 'completed', 'failed') DEFAULT 'available',
-        `progress` JSON, -- {"kill_count": 5, "items_collected": [...]}
-        `started_at` TIMESTAMP NULL,
-        `completed_at` TIMESTAMP NULL,
-        FOREIGN KEY (`character_id`) REFERENCES `characters`(`id`) ON DELETE CASCADE,
-        FOREIGN KEY (`quest_id`) REFERENCES `quests`(`id`) ON DELETE CASCADE,
-        UNIQUE KEY `unique_quest` (`character_id`, `quest_id`)
-    ) ENGINE=InnoDB;",
+    // Бой
+    $pdo->exec("CREATE TABLE combat_logs (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        character_id INT NOT NULL,
+        monster_id INT NOT NULL,
+        result ENUM('win', 'loss', 'flee'),
+        xp_gained INT DEFAULT 0,
+        loot_received TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB");
 
-    "CREATE TABLE `vendors` (
-        `id` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-        `name` VARCHAR(50) NOT NULL,
-        `location_id` INT UNSIGNED NOT NULL,
-        `caps_reserve` INT UNSIGNED DEFAULT 500,
-        `inventory_refresh_hours` INT UNSIGNED DEFAULT 24,
-        FOREIGN KEY (`location_id`) REFERENCES `locations`(`id`) ON DELETE CASCADE
-    ) ENGINE=InnoDB;",
+    // Настройки игры (для админки)
+    $pdo->exec("CREATE TABLE game_settings (
+        setting_key VARCHAR(50) PRIMARY KEY,
+        setting_value TEXT,
+        category VARCHAR(50) DEFAULT 'general',
+        description TEXT
+    ) ENGINE=InnoDB");
 
-    "CREATE TABLE `vendor_items` (
-        `vendor_id` INT UNSIGNED NOT NULL,
-        `item_id` INT UNSIGNED NOT NULL,
-        `quantity` INT UNSIGNED DEFAULT -1, -- -1 означает бесконечно
-        `price_modifier` DECIMAL(3,2) DEFAULT 1.00,
-        PRIMARY KEY (`vendor_id`, `item_id`),
-        FOREIGN KEY (`vendor_id`) REFERENCES `vendors`(`id`) ON DELETE CASCADE,
-        FOREIGN KEY (`item_id`) REFERENCES `items`(`id`) ON DELETE CASCADE
-    ) ENGINE=InnoDB;",
+    // Квесты
+    $pdo->exec("CREATE TABLE quests (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        title VARCHAR(100) NOT NULL,
+        description TEXT,
+        objective TEXT,
+        reward_xp INT DEFAULT 0,
+        reward_caps INT DEFAULT 0,
+        reward_item_id INT,
+        min_level INT DEFAULT 1,
+        is_repeatable BOOLEAN DEFAULT FALSE
+    ) ENGINE=InnoDB");
 
-    # --- ФРАКЦИИ ---
-    "CREATE TABLE `factions` (
-        `id` INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-        `name` VARCHAR(50) NOT NULL,
-        `description` TEXT,
-        `base_relation` INT DEFAULT 0 -- -1000 до 1000
-    ) ENGINE=InnoDB;",
+    $pdo->exec("CREATE TABLE character_quests (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        character_id INT NOT NULL,
+        quest_id INT NOT NULL,
+        status ENUM('available', 'active', 'completed', 'failed') DEFAULT 'available',
+        progress INT DEFAULT 0,
+        started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        completed_at TIMESTAMP NULL,
+        FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE,
+        FOREIGN KEY (quest_id) REFERENCES quests(id) ON DELETE CASCADE,
+        UNIQUE KEY unique_char_quest (character_id, quest_id)
+    ) ENGINE=InnoDB");
 
-    "CREATE TABLE `character_factions` (
-        `character_id` INT UNSIGNED NOT NULL,
-        `faction_id` INT UNSIGNED NOT NULL,
-        `reputation` INT DEFAULT 0,
-        `rank` VARCHAR(50) DEFAULT 'Stranger',
-        PRIMARY KEY (`character_id`, `faction_id`),
-        FOREIGN KEY (`character_id`) REFERENCES `characters`(`id`) ON DELETE CASCADE,
-        FOREIGN KEY (`faction_id`) REFERENCES `factions`(`id`) ON DELETE CASCADE
-    ) ENGINE=InnoDB;",
+    // Фракции
+    $pdo->exec("CREATE TABLE factions (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        name VARCHAR(50) NOT NULL,
+        description TEXT,
+        reputation_step INT DEFAULT 10
+    ) ENGINE=InnoDB");
 
-    # --- НАСТРОЙКИ И АДМИНКА ---
-    "CREATE TABLE `game_settings` (
-        `key_name` VARCHAR(50) PRIMARY KEY,
-        `value` TEXT,
-        `type` ENUM('int', 'float', 'string', 'json') DEFAULT 'string',
-        `description` VARCHAR(255)
-    ) ENGINE=InnoDB;",
+    $pdo->exec("CREATE TABLE character_factions (
+        character_id INT NOT NULL,
+        faction_id INT NOT NULL,
+        reputation INT DEFAULT 0,
+        rank VARCHAR(50) DEFAULT 'Neutral',
+        PRIMARY KEY (character_id, faction_id),
+        FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE,
+        FOREIGN KEY (faction_id) REFERENCES factions(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB");
 
-    "CREATE TABLE `admin_logs` (
-        `id` BIGINT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
-        `admin_id` INT UNSIGNED NOT NULL,
-        `action` VARCHAR(100) NOT NULL,
-        `details` TEXT,
-        `ip_address` VARCHAR(45),
-        `created_at` TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (`admin_id`) REFERENCES `players`(`id`) ON DELETE CASCADE
-    ) ENGINE=InnoDB;"
-];
+    // Крафт
+    $pdo->exec("CREATE TABLE crafting_recipes (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        output_item_id INT NOT NULL,
+        skill_required VARCHAR(20) DEFAULT 'science',
+        level_required INT DEFAULT 1,
+        time_seconds INT DEFAULT 5,
+        FOREIGN KEY (output_item_id) REFERENCES items(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB");
 
-foreach ($queries as $sql) {
-    try {
-        $pdo->exec($sql);
-    } catch (PDOException $e) {
-        echo "⚠️ Ошибка при создании таблицы: " . $e->getMessage() . "\n";
-        // Не прерываем, чтобы увидеть все ошибки сразу
+    $pdo->exec("CREATE TABLE crafting_requirements (
+        recipe_id INT NOT NULL,
+        item_id INT NOT NULL,
+        quantity INT NOT NULL,
+        PRIMARY KEY (recipe_id, item_id),
+        FOREIGN KEY (recipe_id) REFERENCES crafting_recipes(id) ON DELETE CASCADE,
+        FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB");
+
+    // Торговцы
+    $pdo->exec("CREATE TABLE vendors (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        name VARCHAR(50) NOT NULL,
+        location_id INT,
+        caps_reset_hours INT DEFAULT 24,
+        current_caps INT DEFAULT 500,
+        FOREIGN KEY (location_id) REFERENCES locations(id) ON DELETE SET NULL
+    ) ENGINE=InnoDB");
+
+    $pdo->exec("CREATE TABLE vendor_inventory (
+        vendor_id INT NOT NULL,
+        item_id INT NOT NULL,
+        quantity INT DEFAULT 1,
+        price_modifier FLOAT DEFAULT 1.0,
+        PRIMARY KEY (vendor_id, item_id),
+        FOREIGN KEY (vendor_id) REFERENCES vendors(id) ON DELETE CASCADE,
+        FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE
+    ) ENGINE=InnoDB");
+
+    echo "✅ Таблицы созданы.\n";
+
+    // ================= НАПОЛНЕНИЕ ДАННЫМИ =================
+
+    // 1. Базовые предметы
+    $items = [
+        ['Pipe Gun', 'Weapon', 'common', 10, 5, 0],
+        ['Laser Pistol', 'Weapon', 'uncommon', 50, 15, 0],
+        ['Combat Armor', 'Armor', 'uncommon', 100, 0, 10],
+        ['Stimpak', 'Consumable', 'common', 25, 0, 0, 20],
+        ['RadAway', 'Consumable', 'common', 30, 0, 0],
+        ['Bottle Caps', 'Misc', 'common', 1, 0, 0],
+        ['Scrap Metal', 'Junk', 'common', 2, 1, 0],
+        ['Circuitry', 'Junk', 'uncommon', 5, 0.5, 0],
+        ['5mm Round', 'Ammo', 'common', 1, 0.05, 0],
+        ['Energy Cell', 'Ammo', 'common', 2, 0.05, 0],
+    ];
+
+    $stmt = $pdo->prepare("INSERT INTO items (name, type, rarity, value, damage, defense, heal_amount) VALUES (?, ?, ?, ?, ?, ?, ?)");
+    foreach ($items as $item) {
+        $heal = isset($item[7]) ? $item[7] : 0;
+        $stmt->execute([$item[0], strtolower($item[1]), $item[2], $item[3], $item[4], $item[5], $heal]);
     }
-}
-echo "✅ Таблицы созданы.\n";
+    echo "✅ Предметы добавлены.\n";
 
-// === 3. ГЕНЕРАЦИЯ КАРТЫ (16:9) ===
-echo "🗺️ Генерация карты мира...\n";
-$mapWidth = 16;
-$mapHeight = 9;
-$centerX = intdiv($mapWidth, 2);
-$centerY = intdiv($mapHeight, 2);
-
-// Вставка стартовой локации
-$pdo->exec("INSERT INTO `locations` (`name`, `type`, `x`, `y`, `danger_level`, `loot_quality`) 
-            VALUES ('Убежище 101', 'town', $centerX, $centerY, 1, 1)");
-$startLocationId = $pdo->lastInsertId();
-
-// Генерация сетки
-$stmt = $pdo->prepare("INSERT INTO `locations` (`name`, `type`, `x`, `y`, `danger_level`, `loot_quality`) VALUES (?, ?, ?, ?, ?, ?)");
-$types = ['wilderness', 'landmark', 'dungeon'];
-$names = ['Руины', 'Пещера', 'Лагерь рейдеров', 'Заброшенный бункер', 'Радиоактивное озеро', 'Старая заправка'];
-
-for ($y = 0; $y < $mapHeight; $y++) {
-    for ($x = 0; $x < $mapWidth; $x++) {
-        if ($x == $centerX && $y == $centerY) continue; // Пропускаем центр
-        
-        $dist = sqrt(pow($x - $centerX, 2) + pow($y - $centerY, 2));
-        $danger = min(10, floor($dist / 1.5) + 1);
-        $loot = max(1, 5 - floor($dist / 3));
-        
-        $typeIdx = ($danger > 7) ? 2 : (($danger > 4) ? 1 : 0);
-        $name = $names[array_rand($names)] . " ($x:$y)";
-        
-        $stmt->execute([$name, $types[$typeIdx], $x, $y, $danger, $loot]);
+    // 2. Монстры
+    $monsters = [
+        ['Radroach', 'Гигантский таракан', 1, 15, 2, 4, 5],
+        ['Mole Rat', 'Крот-крыса', 2, 25, 3, 6, 10],
+        ['Feral Ghoul', 'Дикий гуль', 3, 40, 5, 8, 20],
+        ['Raider', 'Мародер', 4, 50, 6, 10, 25],
+        ['Super Mutant', 'Супермутант', 6, 80, 8, 12, 50],
+        ['Deathclaw', 'Коготь смерти', 10, 150, 15, 25, 200],
+    ];
+    $stmt = $pdo->prepare("INSERT INTO monsters (name, description, level, hp, damage_min, damage_max, xp_reward) VALUES (?, ?, ?, ?, ?, ?, ?)");
+    foreach ($monsters as $m) {
+        $stmt->execute($m);
     }
-}
+    echo "✅ Монстры добавлены.\n";
 
-// Заполнение связей (простой алгоритм: связь с соседями)
-$locStmt = $pdo->query("SELECT id, x, y FROM locations");
-$locations = $locStmt->fetchAll(PDO::FETCH_ASSOC);
-$mapStmt = $pdo->prepare("INSERT INTO `map_nodes` (`location_id`, `connections`) VALUES (?, ?)");
+    // 3. Фракции
+    $factions = [
+        ['Brotherhood of Steel', 'Технократы, хранители оружия'],
+        ['Minutemen', 'Защитники Содружества'],
+        ['Railroad', 'Освободители синтов'],
+        ['Institute', 'Подземные ученые'],
+    ];
+    $stmt = $pdo->prepare("INSERT INTO factions (name, description) VALUES (?, ?)");
+    foreach ($factions as $f) {
+        $stmt->execute($f);
+    }
+    echo "✅ Фракции добавлены.\n";
 
-foreach ($locations as $loc) {
-    $connections = [];
-    foreach ($locations as $neighbor) {
-        $dist = abs($loc['x'] - $neighbor['x']) + abs($loc['y'] - $neighbor['y']);
-        if ($dist == 1) { // Только ортогональные соседи
-            $connections[] = $neighbor['id'];
+    // 4. Генерация карты (Алгоритм 16:9)
+    echo "🗺️ Генерация карты {$finalWidth}x{$finalHeight}...\n";
+    $locStmt = $pdo->prepare("INSERT INTO locations (name, type, x_coord, y_coord, description, difficulty, loot_quality, monster_spawn_chance) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
+    $connStmt = $pdo->prepare("INSERT INTO location_connections (location_from, location_to, distance) VALUES (?, ?, ?)");
+
+    $types = ['wilderness', 'wilderness', 'wilderness', 'landmark', 'city'];
+    $names = ['Ruins', 'Wasteland', 'Crater', 'Outpost', 'Settlement', 'Cave', 'Forest', 'Highway'];
+    
+    $locationIds = [];
+
+    for ($y = 0; $y < $finalHeight; $y++) {
+        for ($x = 0; $x < $finalWidth; $x++) {
+            // Центр карты - безопасная зона (Стартовая локация)
+            $isCenter = ($x == floor($finalWidth/2) && $y == floor($finalHeight/2));
+            
+            if ($isCenter) {
+                $type = 'city';
+                $name = 'Sanctuary Hills';
+                $safe = true;
+                $diff = 1;
+                $loot = 5;
+                $spawn = 0.0;
+                $desc = 'Безопасное убежище. Стартовая точка.';
+            } else {
+                $type = $types[array_rand($types)];
+                $name = $names[array_rand($names)] . " Sector {$x}-{$y}";
+                $safe = false;
+                $diff = rand(1, 5) + floor(($x+$y)/4);
+                $loot = rand(1, 3);
+                $spawn = 0.2 + ($diff * 0.05);
+                $desc = "Пустошь сектор {$x}:{$y}. Опасность: " . ($diff > 5 ? 'ЭКСТРЕМАЛЬНАЯ' : 'НОРМАЛЬНАЯ');
+            }
+
+            $locStmt->execute([$name, $type, $x, $y, $desc, $diff, $loot, $spawn]);
+            $locationIds[$x][$y] = $pdo->lastInsertId();
         }
     }
-    $mapStmt->execute([$loc['id'], json_encode($connections)]);
-}
-echo "✅ Карта сгенерирована ({$mapWidth}x{$mapHeight}).\n";
 
-// === 4. НАПОЛНЕНИЕ ДАННЫМИ (ITEMS, MONSTERS) ===
-echo "📦 Наполнение справочников...\n";
+    // Создание связей (соседние клетки)
+    foreach ($locationIds as $x => $row) {
+        foreach ($row as $y => $id) {
+            // Связь вправо
+            if (isset($locationIds[$x+1][$y])) {
+                $target = $locationIds[$x+1][$y];
+                $connStmt->execute([$id, $target, 1]);
+                $connStmt->execute([$target, $id, 1]);
+            }
+            // Связь вниз
+            if (isset($locationIds[$x][$y+1])) {
+                $target = $locationIds[$x][$y+1];
+                $connStmt->execute([$id, $target, 1]);
+                $connStmt->execute([$target, $id, 1]);
+            }
+        }
+    }
+    echo "✅ Карта сгенерирована и связана.\n";
 
-// Предметы
-$items = [
-    ['10mm Пистолет', 'weapon', 10, 5, 15, 0, 0],
-    ['Бита', 'weapon', 5, 3, 8, 0, 0],
-    ['Лазерный пистолет', 'weapon', 50, 15, 25, 0, 0],
-    ['Кожаная куртка', 'armor', 15, 0, 0, 5, 0],
-    ['Броня рейдера', 'armor', 40, 0, 0, 15, 0],
-    ['Стимулятор', 'consumable', 25, 0, 0, 0, 20, 'heal', 50],
-    ['Ядер-кола', 'consumable', 5, 0, 0, 0, 5, 'heal', 10],
-    ['Крышка от бутылки', 'junk', 1, 0, 0, 0, 0],
-    ['Изолента', 'junk', 5, 0, 0, 0, 0],
-    ['Микросхема', 'junk', 10, 0, 0, 0, 0],
-];
+    // 5. Настройки шансов (из админки)
+    $settings = [
+        ['search_loot_base_chance', '60', 'loot', 'Базовый шанс найти лут'],
+        ['search_caps_chance_base', '15', 'loot', 'Базовый шанс найти крышки'],
+        ['search_weapon_chance', '0.4', 'loot', 'Шанс найти оружие (%)'],
+        ['search_armor_chance', '0.2', 'loot', 'Шанс найти броню (%)'],
+        ['search_consumable_chance', '2.0', 'loot', 'Шанс найти расходник (%)'],
+        ['combat_xp_multiplier', '1.0', 'combat', 'Множитель опыта'],
+    ];
+    $stmt = $pdo->prepare("INSERT INTO game_settings (setting_key, setting_value, category, description) VALUES (?, ?, ?, ?)");
+    foreach ($settings as $s) {
+        $stmt->execute($s);
+    }
+    echo "✅ Настройки игры добавлены.\n";
 
-$itemStmt = $pdo->prepare("INSERT INTO `items` (`name`, `type`, `value`, `weight`, `damage_min`, `damage_max`, `armor_class`, `consumable_effect`, `consumable_value`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)");
-foreach ($items as $item) {
-    $itemStmt->execute($item);
-}
-
-// Монстры
-$monsters = [
-    ['Гулль-бродяга', 1, 30, 2, 5, 10, 5, 15],
-    ['Рейдер', 2, 50, 5, 10, 25, 10, 30],
-    ['Дикий пес', 1, 20, 3, 6, 15, 5, 10],
-    ['Супермутант', 5, 150, 15, 25, 100, 20, 50],
-    ['Коготь смерти', 8, 300, 30, 50, 250, 50, 100],
-];
-
-$monsterStmt = $pdo->prepare("INSERT INTO `monsters` (`name`, `level`, `hp`, `damage_min`, `damage_max`, `xp_reward`, `caps_reward_min`, `caps_reward_max`) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
-foreach ($monsters as $m) {
-    $monsterStmt->execute($m);
-}
-
-// Фракции
-$factions = [
-    ['Братство Стали', 'Технократы, хранящие знания.', 0],
-    ['Институт', 'Подземные ученые, создающие синтов.', -200],
-    ['Минитмены', 'Защитники простых людей.', 100],
-    ['Подземка', 'Помощь синтам и беглецам.', 50],
-];
-$factionStmt = $pdo->prepare("INSERT INTO `factions` (`name`, `description`, `base_relation`) VALUES (?, ?, ?)");
-foreach ($factions as $f) {
-    $factionStmt->execute($f);
-}
-
-// Настройки шансов (из предыдущих требований)
-$settings = [
-    ['search_loot_base_chance', '60', 'int', 'Базовый шанс найти мусор (%)'],
-    ['search_caps_chance_base', '15', 'float', 'Базовый шанс найти крышки (%)'],
-    ['search_weapon_chance', '0.4', 'float', 'Шанс найти оружие (%)'],
-    ['search_armor_chance', '0.2', 'float', 'Шанс найти броню (%)'],
-    ['search_consumable_chance', '2.0', 'float', 'Шанс найти расходники (%)'],
-    ['search_pity_timer_threshold', '50', 'int', 'Поисков до гарантированного лута'],
-];
-$setStmt = $pdo->prepare("INSERT INTO `game_settings` (`key_name`, `value`, `type`, `description`) VALUES (?, ?, ?, ?)");
-foreach ($settings as $s) {
-    $setStmt->execute($s);
-}
-
-echo "✅ Справочники наполнены.\n";
-
-// === 5. СОЗДАНИЕ АДМИНА ===
-echo "👤 Создание администратора...\n";
-$hash = password_hash($adminConfig['password'], PASSWORD_DEFAULT);
-try {
-    $pdo->prepare("INSERT INTO `players` (`username`, `password_hash`, `email`, `role`) VALUES (?, ?, ?, 'admin')")
-        ->execute([$adminConfig['username'], $hash, $adminConfig['email']]);
+    // 6. Создание Администратора
+    $adminPass = password_hash('admin123', PASSWORD_DEFAULT);
+    $pdo->exec("INSERT INTO players (username, password_hash, role, email) VALUES ('admin', '$adminPass', 'super_admin', 'admin@fallout.local')");
+    $playerId = $pdo->lastInsertId();
     
-    // Создаем персонажа для админа
-    $pid = $pdo->lastInsertId();
-    $pdo->prepare("INSERT INTO `characters` (`player_id`, `name`, `hp_max`, `caps`, `location_id`) VALUES (?, 'AdminCommander', 200, 1000, ?)")
-        ->execute([$pid, $startLocationId]);
-        
-    echo "✅ Админ создан: {$adminConfig['username']} / {$adminConfig['password']}\n";
-} catch (PDOException $e) {
-    echo "⚠️ Админ уже существует или ошибка: " . $e->getMessage() . "\n";
-}
+    $pdo->exec("INSERT INTO characters (player_id, name, level, hp, max_hp, x_coord, y_coord, location_id) 
+                VALUES ($playerId, 'Admin Commander', 10, 200, 200, " . floor($finalWidth/2) . ", " . floor($finalHeight/2) . ", " . $locationIds[floor($finalWidth/2)][floor($finalHeight/2)] . ")");
+    
+    echo "✅ Аккаунт администратора создан.\n";
+    echo "   Логин: admin\n";
+    echo "   Пароль: admin123\n";
 
-echo "\n🎉 УСТАНОВКА ЗАВЕРШЕНА УСПЕШНО!\n";
-echo "🔗 Подключитесь к БД: {$dbConfig['name']}\n";
-echo "⚠️ НЕ ЗАБУДЬТЕ УДАЛИТЬ ЭТОТ ФАЙЛ ИЛИ ЗАПРЕТИТЬ ДОСТУП К НЕМУ В ПРОДАКШЕНЕ!\n";
+    // Коммит транзакции
+    $pdo->commit();
+
+    echo "\n🎉 УСТАНОВКА ЗАВЕРШЕНА УСПЕШНО!\n";
+    echo "================================\n";
+    echo "База данных готова к работе.\n";
+    echo "Не забудьте удалить файл install.php перед запуском сайта!\n";
+
+} catch (PDOException $e) {
+    // Откат при ошибке
+    if (isset($pdo)) {
+        try { $pdo->rollBack(); } catch (Exception $i) {}
+    }
+    die("\n❌ КРИТИЧЕСКАЯ ОШИБКА: " . $e->getMessage() . "\n");
+}
+?>
